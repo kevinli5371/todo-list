@@ -8,6 +8,7 @@ const fadeTransition = { duration: 0.2, ease: [0.4, 0, 0.2, 1] };
 const TodoItem = ({ todo, camera, isFocused, onUpdate, onToggle, onDelete, onFocus, onMove }) => {
   const inputRef = useRef(null);
   const dragControls = useDragControls();
+  const dragStartPos = useRef({ x: 0, y: 0, worldX: 0, worldY: 0 });
 
   useEffect(() => {
     if (isFocused && inputRef.current) {
@@ -24,21 +25,21 @@ const TodoItem = ({ todo, camera, isFocused, onUpdate, onToggle, onDelete, onFoc
 
   return (
     <motion.div
-      drag
-      dragControls={dragControls}
-      dragListener={false}
-      dragMomentum={false}
-      dragElastic={0}
-      onDragStart={() => onFocus(todo.id)}
-      onDragEnd={(e, info) => {
-        const dx = info.offset.x / camera.zoom;
-        const dy = info.offset.y / camera.zoom;
-        onMove(todo.id, todo.x + dx, todo.y + dy);
-      }}
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      animate={{
+        opacity: 1,
+        scale: isFocused ? 1.02 : 1,
+        x: 0,
+        y: 0
+      }}
+      whileHover={{ scale: isFocused ? 1.02 : 1.01 }}
       exit={{ opacity: 0 }}
-      transition={fadeTransition}
+      transition={{
+        opacity: { duration: 0.2 },
+        scale: { duration: 0.2 },
+        x: { duration: 0 },
+        y: { duration: 0 }
+      }}
       className="todo-item-canvas"
       style={{
         position: 'absolute',
@@ -46,8 +47,6 @@ const TodoItem = ({ todo, camera, isFocused, onUpdate, onToggle, onDelete, onFoc
         top: todo.y,
         pointerEvents: 'auto',
         zIndex: isFocused ? 10 : 1,
-        x: 0,
-        y: 0
       }}
       onMouseDown={(e) => {
         e.stopPropagation();
@@ -56,10 +55,7 @@ const TodoItem = ({ todo, camera, isFocused, onUpdate, onToggle, onDelete, onFoc
     >
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <div
-          onPointerDown={(e) => dragControls.start(e)}
-          style={{ cursor: 'grab', padding: '4px 0', opacity: 0.3, transition: 'opacity 0.2s', display: 'flex' }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = 0.8}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = 0.3}
+          style={{ cursor: 'default', padding: '4px 0', opacity: 0.3, transition: 'opacity 0.2s', display: 'flex' }}
         >
           <GripVertical size={16} />
         </div>
@@ -209,25 +205,25 @@ const App = () => {
         timestamp: new Date().toISOString()
       };
 
-      setTodos([...todos, newTodo]);
+      setTodos(prev => [...prev, newTodo]);
       setFocusedId(newTodo.id);
     }
   };
 
   const updateTodoText = (id, text) => {
-    setTodos(todos.map(t => t.id === id ? { ...t, text } : t));
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, text } : t));
   };
 
   const toggleComplete = (id) => {
-    setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
   };
 
   const deleteTodo = (id) => {
-    setTodos(todos.filter(t => t.id !== id));
+    setTodos(prev => prev.filter(t => t.id !== id));
   };
 
   const moveTodo = (id, x, y) => {
-    setTodos(todos.map(t => t.id === id ? { ...t, x, y } : t));
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, x, y } : t));
   };
 
   return (

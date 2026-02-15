@@ -60,8 +60,6 @@ body {
 .todo-item-canvas:focus-within {
   border-color: var(--accent);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-  transform: scale(1.02);
-  transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .todo-input {
