@@ -34,6 +34,8 @@ const SidebarItem = ({ todo, active, onClick, onDelete }) => {
   );
 };
 
+const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
+
 // Helper Component for Individual Todo Items to handle focus and drag
 const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) => {
   const inputRef = useRef(null);
@@ -53,13 +55,13 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) =>
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={{ opacity: 0, scale: 0.95 }}
       animate={{
         opacity: 1,
-        scale: isFocused ? 1.02 : 1,
+        scale: isFocused ? 1.01 : 1,
       }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={snappyTransition}
       className="todo-item-canvas"
       style={{
         position: 'absolute',

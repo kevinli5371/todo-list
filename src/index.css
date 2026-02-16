@@ -70,7 +70,7 @@ body {
   border-radius: 8px;
   cursor: pointer;
   margin-bottom: 2px;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.1s cubic-bezier(0.4, 0, 1, 1);
 }
 
 .sidebar-item:hover {
@@ -112,7 +112,7 @@ body {
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
-  transition: all 0.2s;
+  transition: all 0.1s cubic-bezier(0.4, 0, 1, 1);
   flex-shrink: 0;
   margin-left: 8px;
 }
@@ -159,7 +159,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.1s;
+  transition: background-color 0.1s cubic-bezier(0.4, 0, 1, 1);
 }
 
 .toolbar-btn:hover {
@@ -184,7 +184,7 @@ body {
   min-width: 240px;
   border-radius: 10px;
   border: 1px solid transparent;
-  transition: border-color 0.2s;
+  transition: border-color 0.1s cubic-bezier(0.4, 0, 1, 1);
   user-select: auto;
 }
 
