@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const SidebarItem = ({ todo, active, onClick }) => {
+const SidebarItem = ({ todo, active, onClick, onDelete }) => {
   const title = todo.text.split('\n')[0] || 'New Note';
   const rest = todo.text.split('\n').slice(1).join(' ') || 'No additional text';
   const date = new Date(todo.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -12,10 +12,23 @@ const SidebarItem = ({ todo, active, onClick }) => {
       className={`sidebar-item ${active ? 'active' : ''}`}
       onClick={() => onClick(todo)}
     >
-      <div className="sidebar-item-title">{title}</div>
-      <div className="sidebar-item-meta">
-        <span>{date}</span>
-        <span className="sidebar-item-preview">{rest}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="sidebar-item-title">{title}</div>
+          <div className="sidebar-item-meta">
+            <span>{date}</span>
+            <span className="sidebar-item-preview">{rest}</span>
+          </div>
+        </div>
+        <button
+          className="sidebar-delete-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(todo.id);
+          }}
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </div>
   );
@@ -223,6 +236,7 @@ const App = () => {
               todo={todo}
               active={todo.id === focusedId}
               onClick={centerOnTodo}
+              onDelete={deleteTodo}
             />
           ))}
           {todos.length === 0 && (
