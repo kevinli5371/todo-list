@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit } from 'lucide-react';
+import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const SidebarItem = ({ todo, active, onClick, onDelete }) => {
-  const title = todo.text.split('\n')[0] || 'New Note';
+  const title = todo.text.split('\n')[0] || 'New Item';
   const rest = todo.text.split('\n').slice(1).join(' ') || 'No additional text';
   const date = new Date(todo.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
@@ -93,7 +93,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) =>
             value={todo.text}
             onChange={(e) => onUpdate(todo.id, e.target.value)}
             onMouseDown={(e) => e.stopPropagation()}
-            placeholder="New Note"
+            placeholder="New Item"
             rows={1}
             style={{ resize: 'none', overflow: 'hidden' }}
             onInput={(e) => {
@@ -124,6 +124,7 @@ const App = () => {
 
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const [focusedId, setFocusedId] = useState(null);
+  const [showSidebar, setShowSidebar] = useState(true);
   const canvasRef = useRef(null);
 
   // Panning state
@@ -136,11 +137,11 @@ const App = () => {
   }, [todos]);
 
   const createNote = (x, y) => {
-    const id = Date.now();
+    const sidebarWidth = showSidebar ? 280 : 0;
     const newTodo = {
       id,
       text: '',
-      x: x ?? (camera.x + (window.innerWidth / 2 - 140) / camera.zoom - 120),
+      x: x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120),
       y: y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20),
       completed: false,
       timestamp: new Date().toISOString()
@@ -157,7 +158,7 @@ const App = () => {
       const factor = Math.pow(1.1, delta / 100);
       const newZoom = Math.min(Math.max(camera.zoom * factor, 0.1), 5);
 
-      const mouseX = e.clientX - 280; // Offset for sidebar
+      const mouseX = e.clientX - (showSidebar ? 280 : 0); // Offset for sidebar
       const mouseY = e.clientY - 52; // Offset for toolbar
 
       setCamera(prev => ({
@@ -228,7 +229,7 @@ const App = () => {
   };
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
       <aside className="sidebar">
         <div className="sidebar-header">Notes</div>
         <div className="sidebar-list">
@@ -251,7 +252,15 @@ const App = () => {
 
       <main className="main-area">
         <header className="toolbar">
-          <button className="toolbar-btn" onClick={() => createNote()} title="New Note">
+          <button
+            className={`toolbar-btn ${!showSidebar ? 'active' : ''}`}
+            onClick={() => setShowSidebar(!showSidebar)}
+            title={showSidebar ? "Hide Sidebar" : "Show Sidebar"}
+            style={{ marginRight: 'auto' }}
+          >
+            <PanelLeft size={20} />
+          </button>
+          <button className="toolbar-btn" onClick={() => createNote()} title="New Item">
             <Edit size={20} />
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
