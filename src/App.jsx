@@ -136,12 +136,12 @@ const App = () => {
     localStorage.setItem('spatial-todos', JSON.stringify(todos));
   }, [todos]);
 
-  const createNote = (x, y) => {
+  const createNote = (x, y, initialText = '') => {
     const sidebarWidth = showSidebar ? 280 : 0;
     const id = Date.now();
     const newTodo = {
       id,
-      text: '',
+      text: initialText,
       x: x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120),
       y: y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20),
       completed: false,
@@ -151,6 +151,25 @@ const App = () => {
     setFocusedId(id);
     return id;
   };
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      // Ignore if user is already typing in an input or textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      // Ignore modifier keys
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Only trigger for single printable characters
+      if (e.key.length === 1) {
+        e.preventDefault();
+        createNote(null, null, e.key);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [camera, showSidebar]); // Re-bind if camera/sidebar change to get correct center position
 
   const handleWheel = (e) => {
     if (e.ctrlKey || e.metaKey) {
