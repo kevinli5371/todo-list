@@ -138,6 +138,7 @@ const App = () => {
 
   const createNote = (x, y) => {
     const sidebarWidth = showSidebar ? 280 : 0;
+    const id = Date.now();
     const newTodo = {
       id,
       text: '',
