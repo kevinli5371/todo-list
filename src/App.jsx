@@ -1,6 +1,149 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft } from 'lucide-react';
+import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft, Calendar, RefreshCw, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+const REPEAT_OPTIONS = [null, 'daily', 'weekly', 'monthly', 'yearly'];
+const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+
+const formatDueDate = (iso) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const tmrw = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const isTomorrow = d.toDateString() === tmrw.toDateString();
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return `Today · ${timeStr}`;
+  if (isTomorrow) return `Tomorrow · ${timeStr}`;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' · ' + timeStr;
+};
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+const DatePickerPopup = ({ value, onChange, onClear }) => {
+  const init = value ? new Date(value) : new Date();
+  const [viewYear, setViewYear] = useState(init.getFullYear());
+  const [viewMonth, setViewMonth] = useState(init.getMonth());
+  const [timeH, setTimeH] = useState(value ? new Date(value).getHours() : 9);
+  const [timeM, setTimeM] = useState(value ? new Date(value).getMinutes() : 0);
+
+  const selected = value ? new Date(value) : null;
+  const today = new Date();
+
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const cells = Array(firstDow).fill(null).concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+
+  const isSelected = (day) =>
+    selected && selected.getFullYear() === viewYear && selected.getMonth() === viewMonth && selected.getDate() === day;
+  const isToday = (day) =>
+    today.getFullYear() === viewYear && today.getMonth() === viewMonth && today.getDate() === day;
+
+  const pickDay = (day) => {
+    const d = new Date(viewYear, viewMonth, day, timeH, timeM);
+    onChange(d.toISOString());
+  };
+
+  const applyTime = (h, m) => {
+    if (!selected) return;
+    const d = new Date(selected);
+    d.setHours(h, m);
+    onChange(d.toISOString());
+  };
+
+  const prevMonth = (e) => {
+    e.stopPropagation();
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = (e) => {
+    e.stopPropagation();
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const ampm = timeH >= 12 ? 'PM' : 'AM';
+  const displayH = timeH % 12 === 0 ? 12 : timeH % 12;
+
+  return (
+    <div className="dp-popup" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="dp-header">
+        <button className="dp-nav" onClick={prevMonth}>‹</button>
+        <span className="dp-month-year">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+        <button className="dp-nav" onClick={nextMonth}>›</button>
+      </div>
+
+      <div className="dp-grid">
+        {DAY_NAMES.map(d => <div key={d} className="dp-dow">{d}</div>)}
+        {cells.map((day, i) => (
+          <div
+            key={i}
+            className={[
+              'dp-cell',
+              day ? 'dp-day' : '',
+              day && isSelected(day) ? 'dp-selected' : '',
+              day && isToday(day) && !isSelected(day) ? 'dp-today' : '',
+            ].filter(Boolean).join(' ')}
+            onClick={() => day && pickDay(day)}
+          >
+            {day ?? ''}
+          </div>
+        ))}
+      </div>
+
+      <div className="dp-time-row">
+        <span className="dp-time-label">Time</span>
+        <div className="dp-time-controls">
+          <input
+            className="dp-time-input"
+            type="number"
+            min={1} max={12}
+            value={displayH}
+            onChange={(e) => {
+              let h = Math.max(1, Math.min(12, parseInt(e.target.value) || 1));
+              const h24 = ampm === 'PM' ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
+              setTimeH(h24);
+              applyTime(h24, timeM);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+          <span className="dp-time-sep">:</span>
+          <input
+            className="dp-time-input"
+            type="number"
+            min={0} max={59}
+            value={String(timeM).padStart(2, '0')}
+            onChange={(e) => {
+              const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+              setTimeM(m);
+              applyTime(timeH, m);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+          <button
+            className="dp-ampm"
+            onClick={(e) => {
+              e.stopPropagation();
+              const newH = timeH >= 12 ? timeH - 12 : timeH + 12;
+              setTimeH(newH);
+              applyTime(newH, timeM);
+            }}
+          >
+            {ampm}
+          </button>
+        </div>
+      </div>
+
+      {value && (
+        <div className="dp-actions">
+          <button className="dp-clear" onClick={(e) => { e.stopPropagation(); onClear(); }}>
+            Clear date
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const SidebarItem = ({ todo, active, onClick, onDelete }) => {
   const title = todo.text.split('\n')[0] || 'New Item';
@@ -37,9 +180,14 @@ const SidebarItem = ({ todo, active, onClick, onDelete }) => {
 const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
 
 // Helper Component for Individual Todo Items to handle focus and drag
-const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef }) => {
+const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef, onUpdateDueDate, onUpdateRepeat }) => {
   const inputRef = useRef(null);
   const itemRef = useRef(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const isOverdue = todo.dueDate && new Date(todo.dueDate) < new Date() && !todo.completed;
+  const isSoon = todo.dueDate && !isOverdue && !todo.completed && (new Date(todo.dueDate) - new Date()) < 86400000;
+  const dateClass = isOverdue ? 'overdue' : isSoon ? 'soon' : todo.dueDate ? 'active' : '';
 
   useEffect(() => {
     if (isFocused && inputRef.current) {
@@ -168,6 +316,41 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
           ))}
         </div>
       </div>
+
+      {/* Date / repeat footer */}
+      <div className={`todo-footer ${(todo.dueDate || todo.repeat || showDatePicker) ? 'has-data' : ''}`}>
+        <button
+          className={`todo-meta-btn ${dateClass}`}
+          onClick={(e) => { e.stopPropagation(); setShowDatePicker(p => !p); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          title={todo.dueDate ? 'Edit date' : 'Add date'}
+        >
+          <Calendar size={12} />
+          <span>{todo.dueDate ? formatDueDate(todo.dueDate) : 'Date'}</span>
+        </button>
+        <button
+          className={`todo-meta-btn ${todo.repeat ? 'active' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            const idx = REPEAT_OPTIONS.indexOf(todo.repeat ?? null);
+            onUpdateRepeat(todo.id, REPEAT_OPTIONS[(idx + 1) % REPEAT_OPTIONS.length]);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          title="Set repeat"
+        >
+          <RefreshCw size={12} />
+          <span>{todo.repeat ? REPEAT_LABELS[todo.repeat] : 'Repeat'}</span>
+        </button>
+      </div>
+
+      {/* Custom date/time picker */}
+      {showDatePicker && (
+        <DatePickerPopup
+          value={todo.dueDate}
+          onChange={(iso) => onUpdateDueDate(todo.id, iso)}
+          onClear={() => { onUpdateDueDate(todo.id, null); setShowDatePicker(false); }}
+        />
+      )}
     </motion.div>
   );
 };
@@ -199,6 +382,14 @@ const App = () => {
 
   const updateTodoPosition = (id, x, y) => {
     setTodos(prev => prev.map(t => t.id === id ? { ...t, x, y } : t));
+  };
+
+  const updateDueDate = (id, dueDate) => {
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, dueDate } : t));
+  };
+
+  const updateRepeat = (id, repeat) => {
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, repeat } : t));
   };
 
   const createNote = (x, y, initialText = '') => {
@@ -405,6 +596,8 @@ const App = () => {
                   onFocus={setFocusedId}
                   onPositionChange={updateTodoPosition}
                   cameraRef={cameraRef}
+                  onUpdateDueDate={updateDueDate}
+                  onUpdateRepeat={updateRepeat}
                 />
               ))}
             </AnimatePresence>
