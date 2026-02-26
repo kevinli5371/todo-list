@@ -37,8 +37,9 @@ const SidebarItem = ({ todo, active, onClick, onDelete }) => {
 const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
 
 // Helper Component for Individual Todo Items to handle focus and drag
-const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) => {
+const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef }) => {
   const inputRef = useRef(null);
+  const itemRef = useRef(null);
 
   useEffect(() => {
     if (isFocused && inputRef.current) {
@@ -53,8 +54,67 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) =>
     }
   }, [isFocused]);
 
+  const handleMouseDown = (e) => {
+    // Let textarea handle its own mouse events (text cursor/selection)
+    if (
+      e.target.tagName === 'TEXTAREA' ||
+      e.target.closest('.checkbox') ||
+      e.target.closest('.delete-btn')
+    ) {
+      e.stopPropagation();
+      onFocus(todo.id);
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    onFocus(todo.id);
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startTodoX = todo.x;
+    const startTodoY = todo.y;
+    // Capture zoom at drag start — doesn't change during drag
+    const zoom = cameraRef.current.zoom;
+
+    if (itemRef.current) {
+      itemRef.current.style.zIndex = '100';
+      itemRef.current.style.cursor = 'grabbing';
+    }
+    document.body.style.userSelect = 'none';
+
+    const onMove = (moveEvent) => {
+      // Convert screen-space delta to world-space by dividing by zoom
+      const dx = (moveEvent.clientX - startClientX) / zoom;
+      const dy = (moveEvent.clientY - startClientY) / zoom;
+      // Update DOM directly — no React re-render, zero lag
+      if (itemRef.current) {
+        itemRef.current.style.left = `${startTodoX + dx}px`;
+        itemRef.current.style.top = `${startTodoY + dy}px`;
+      }
+    };
+
+    const onUp = (upEvent) => {
+      document.body.style.userSelect = '';
+      if (itemRef.current) {
+        itemRef.current.style.zIndex = '';
+        itemRef.current.style.cursor = '';
+      }
+      const dx = (upEvent.clientX - startClientX) / zoom;
+      const dy = (upEvent.clientY - startClientY) / zoom;
+      // Sync final position to React state — matches DOM exactly, no visual snap
+      onPositionChange(todo.id, startTodoX + dx, startTodoY + dy);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   return (
     <motion.div
+      ref={itemRef}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{
         opacity: 1,
@@ -69,11 +129,9 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) =>
         top: todo.y,
         pointerEvents: 'auto',
         zIndex: isFocused ? 10 : 1,
+        cursor: 'grab',
       }}
-      onMouseDown={(e) => {
-        e.stopPropagation();
-        onFocus(todo.id);
-      }}
+      onMouseDown={handleMouseDown}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <div
@@ -95,7 +153,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus }) =>
             onMouseDown={(e) => e.stopPropagation()}
             placeholder="New Item"
             rows={1}
-            style={{ resize: 'none', overflow: 'hidden' }}
+            style={{ resize: 'none', overflow: 'hidden', cursor: 'text' }}
             onInput={(e) => {
               e.target.style.height = 'auto';
               e.target.style.height = e.target.scrollHeight + 'px';
@@ -123,6 +181,7 @@ const App = () => {
   });
 
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
+  const cameraRef = useRef(camera);
   const [focusedId, setFocusedId] = useState(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const canvasRef = useRef(null);
@@ -133,8 +192,16 @@ const App = () => {
   const dragStartPos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
+
+  useEffect(() => {
     localStorage.setItem('spatial-todos', JSON.stringify(todos));
   }, [todos]);
+
+  const updateTodoPosition = (id, x, y) => {
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, x, y } : t));
+  };
 
   const createNote = (x, y, initialText = '') => {
     const sidebarWidth = showSidebar ? 280 : 0;
@@ -338,6 +405,8 @@ const App = () => {
                   onToggle={toggleComplete}
                   onDelete={deleteTodo}
                   onFocus={setFocusedId}
+                  onPositionChange={updateTodoPosition}
+                  cameraRef={cameraRef}
                 />
               ))}
             </AnimatePresence>
