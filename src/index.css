@@ -255,6 +255,35 @@ body {
   opacity: 1;
 }
 
+.drag-handle {
+  display: grid;
+  grid-template-columns: repeat(2, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 3px;
+  opacity: 0;
+  cursor: grab;
+  align-self: center;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 3px;
+  transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.todo-item-canvas:hover .drag-handle {
+  opacity: 1;
+}
+
+.drag-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--text-secondary);
+}
+
 .delete-btn:hover {
   color: #ff3b30;
 }

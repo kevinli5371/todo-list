@@ -54,18 +54,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
     }
   }, [isFocused]);
 
-  const handleMouseDown = (e) => {
-    // Let textarea handle its own mouse events (text cursor/selection)
-    if (
-      e.target.tagName === 'TEXTAREA' ||
-      e.target.closest('.checkbox') ||
-      e.target.closest('.delete-btn')
-    ) {
-      e.stopPropagation();
-      onFocus(todo.id);
-      return;
-    }
-
+  const handleDragHandleMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
     onFocus(todo.id);
@@ -79,9 +68,9 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
 
     if (itemRef.current) {
       itemRef.current.style.zIndex = '100';
-      itemRef.current.style.cursor = 'grabbing';
     }
     document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
 
     const onMove = (moveEvent) => {
       // Convert screen-space delta to world-space by dividing by zoom
@@ -96,9 +85,9 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
 
     const onUp = (upEvent) => {
       document.body.style.userSelect = '';
+      document.body.style.cursor = '';
       if (itemRef.current) {
         itemRef.current.style.zIndex = '';
-        itemRef.current.style.cursor = '';
       }
       const dx = (upEvent.clientX - startClientX) / zoom;
       const dy = (upEvent.clientY - startClientY) / zoom;
@@ -129,9 +118,8 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         top: todo.y,
         pointerEvents: 'auto',
         zIndex: isFocused ? 10 : 1,
-        cursor: 'grab',
       }}
-      onMouseDown={handleMouseDown}
+      onMouseDown={(e) => { e.stopPropagation(); onFocus(todo.id); }}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <div
@@ -169,6 +157,16 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         >
           <Trash2 size={16} />
         </button>
+        <div
+          className="drag-handle"
+          onMouseDown={handleDragHandleMouseDown}
+        >
+          {[0, 1, 2].map(row => (
+            [0, 1].map(col => (
+              <div key={`${row}-${col}`} className="drag-dot" />
+            ))
+          ))}
+        </div>
       </div>
     </motion.div>
   );
