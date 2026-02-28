@@ -176,7 +176,7 @@ const SidebarItem = ({ todo, active, onClick, onDelete, classification }) => {
             <span>{date}</span>
             {classification && (
               <span className="sidebar-importance" style={{ color: colors?.text }}>
-                #{classification.importance}
+                #{classification.rank ?? classification.importance}
               </span>
             )}
             <span className="sidebar-item-preview">{rest}</span>
@@ -343,11 +343,11 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
           <span
             className="category-badge"
             style={{ background: catColors?.bg, color: catColors?.text }}
-            title={`Importance: ${classification.importance}/10 — ${classification.reasoning}`}
+            title={`Rank #${classification.rank ?? classification.importance} in ${classification.category} — ${classification.reasoning}`}
           >
             <span className="category-dot" style={{ background: catColors?.dot }} />
             {classification.category}
-            <span className="category-importance">{classification.importance}</span>
+            <span className="category-importance">#{classification.rank ?? classification.importance}</span>
           </span>
         )}
         <button
@@ -523,12 +523,18 @@ const App = () => {
     if (!isPanning) return;
     setIsPanning(false);
     const dist = Math.hypot(e.clientX - dragStartPos.current.x, e.clientY - dragStartPos.current.y);
+    // Single click on canvas → just unfocus the current item
     if (dist < 5) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      const worldX = camera.x + (e.clientX - rect.left) / camera.zoom - 120;
-      const worldY = camera.y + (e.clientY - rect.top) / camera.zoom - 20;
-      createNote(worldX, worldY);
+      setFocusedId(null);
     }
+  };
+
+  const handleDoubleClick = (e) => {
+    if (e.target !== canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const worldX = camera.x + (e.clientX - rect.left) / camera.zoom - 120;
+    const worldY = camera.y + (e.clientY - rect.top) / camera.zoom - 20;
+    createNote(worldX, worldY);
   };
 
   const centerOnTodo = (todo) => {
@@ -632,6 +638,7 @@ const App = () => {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onDoubleClick={handleDoubleClick}
           onMouseLeave={() => setIsPanning(false)}
           style={{
             cursor: isPanning ? 'grabbing' : 'grab',

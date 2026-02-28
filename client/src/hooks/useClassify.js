@@ -37,6 +37,12 @@ export const useClassify = (todos) => {
         if (!res.ok) throw new Error(`Server returned ${res.status}`);
 
         const data = await res.json();
+
+        // Assign global ranks across all categories — sort by importance descending,
+        // then number them 1, 2, 3… so #1 is the most important todo overall.
+        const sorted = [...data.results].sort((a, b) => b.importance - a.importance);
+        sorted.forEach((item, i) => { item.rank = i + 1; });
+
         const map = new Map();
         data.results.forEach((r) => map.set(r.id, r));
         setClassifications(map);
