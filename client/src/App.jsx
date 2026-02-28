@@ -1,9 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft, Calendar, RefreshCw, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useClassify } from './hooks/useClassify';
 
 const REPEAT_OPTIONS = [null, 'daily', 'weekly', 'monthly', 'yearly'];
 const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+
+const CATEGORY_ORDER = ['Work', 'Personal', 'Health', 'Finance', 'Learning', 'Home', 'Social', 'Other'];
+const CATEGORY_COLORS = {
+  Work:     { bg: '#dbeafe', text: '#1d4ed8', dot: '#3b82f6' },
+  Personal: { bg: '#ede9fe', text: '#6d28d9', dot: '#8b5cf6' },
+  Health:   { bg: '#dcfce7', text: '#15803d', dot: '#22c55e' },
+  Finance:  { bg: '#fef3c7', text: '#b45309', dot: '#f59e0b' },
+  Learning: { bg: '#ccfbf1', text: '#0f766e', dot: '#14b8a6' },
+  Home:     { bg: '#ffedd5', text: '#c2410c', dot: '#f97316' },
+  Social:   { bg: '#fce7f3', text: '#be185d', dot: '#ec4899' },
+  Other:    { bg: '#f3f4f6', text: '#4b5563', dot: '#9ca3af' },
+};
 
 const formatDueDate = (iso) => {
   const d = new Date(iso);
@@ -145,10 +158,11 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
   );
 };
 
-const SidebarItem = ({ todo, active, onClick, onDelete }) => {
+const SidebarItem = ({ todo, active, onClick, onDelete, classification }) => {
   const title = todo.text.split('\n')[0] || 'New Item';
   const rest = todo.text.split('\n').slice(1).join(' ') || 'No additional text';
   const date = new Date(todo.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const colors = classification ? CATEGORY_COLORS[classification.category] : null;
 
   return (
     <div
@@ -160,6 +174,11 @@ const SidebarItem = ({ todo, active, onClick, onDelete }) => {
           <div className="sidebar-item-title">{title}</div>
           <div className="sidebar-item-meta">
             <span>{date}</span>
+            {classification && (
+              <span className="sidebar-importance" style={{ color: colors?.text }}>
+                #{classification.importance}
+              </span>
+            )}
             <span className="sidebar-item-preview">{rest}</span>
           </div>
         </div>
@@ -180,7 +199,7 @@ const SidebarItem = ({ todo, active, onClick, onDelete }) => {
 const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
 
 // Helper Component for Individual Todo Items to handle focus and drag
-const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef, onUpdateDueDate, onUpdateRepeat }) => {
+const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef, onUpdateDueDate, onUpdateRepeat, classification }) => {
   const inputRef = useRef(null);
   const itemRef = useRef(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -188,6 +207,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
   const isOverdue = todo.dueDate && new Date(todo.dueDate) < new Date() && !todo.completed;
   const isSoon = todo.dueDate && !isOverdue && !todo.completed && (new Date(todo.dueDate) - new Date()) < 86400000;
   const dateClass = isOverdue ? 'overdue' : isSoon ? 'soon' : todo.dueDate ? 'active' : '';
+  const catColors = classification ? CATEGORY_COLORS[classification.category] : null;
 
   useEffect(() => {
     if (isFocused && inputRef.current) {
@@ -318,7 +338,18 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
       </div>
 
       {/* Date / repeat footer */}
-      <div className={`todo-footer ${(todo.dueDate || todo.repeat || showDatePicker) ? 'has-data' : ''}`}>
+      <div className={`todo-footer ${(todo.dueDate || todo.repeat || showDatePicker || classification) ? 'has-data' : ''}`}>
+        {classification && (
+          <span
+            className="category-badge"
+            style={{ background: catColors?.bg, color: catColors?.text }}
+            title={`Importance: ${classification.importance}/10 — ${classification.reasoning}`}
+          >
+            <span className="category-dot" style={{ background: catColors?.dot }} />
+            {classification.category}
+            <span className="category-importance">{classification.importance}</span>
+          </span>
+        )}
         <button
           className={`todo-meta-btn ${dateClass}`}
           onClick={(e) => { e.stopPropagation(); setShowDatePicker(p => !p); }}
@@ -360,6 +391,24 @@ const App = () => {
     const saved = localStorage.getItem('spatial-todos');
     return saved ? JSON.parse(saved) : [];
   });
+
+  const { classifications, isLoading: classifyLoading } = useClassify(todos);
+
+  // Group todos by category for the sidebar (falls back to flat list when server is off)
+  const groupedSidebar = useMemo(() => {
+    if (classifications.size === 0) return null;
+    const groups = {};
+    todos.forEach((todo) => {
+      const cat = classifications.get(todo.id)?.category ?? 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(todo);
+    });
+    // Sort within each group by importance descending
+    Object.values(groups).forEach((g) =>
+      g.sort((a, b) => (classifications.get(b.id)?.importance ?? 0) - (classifications.get(a.id)?.importance ?? 0))
+    );
+    return groups;
+  }, [todos, classifications]);
 
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
@@ -507,17 +556,41 @@ const App = () => {
   return (
     <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
       <aside className="sidebar">
-        <div className="sidebar-header">Notes</div>
+        <div className="sidebar-header">
+          Notes
+          {classifyLoading && <span className="classify-spinner" title="Classifying…" />}
+        </div>
         <div className="sidebar-list">
-          {todos.map(todo => (
-            <SidebarItem
-              key={todo.id}
-              todo={todo}
-              active={todo.id === focusedId}
-              onClick={centerOnTodo}
-              onDelete={deleteTodo}
-            />
-          ))}
+          {groupedSidebar
+            ? CATEGORY_ORDER.filter((cat) => groupedSidebar[cat]).map((cat) => (
+                <div key={cat} className="sidebar-group">
+                  <div className="sidebar-group-header">
+                    <span className="sidebar-group-dot" style={{ background: CATEGORY_COLORS[cat].dot }} />
+                    {cat}
+                    <span className="sidebar-group-count">{groupedSidebar[cat].length}</span>
+                  </div>
+                  {groupedSidebar[cat].map((todo) => (
+                    <SidebarItem
+                      key={todo.id}
+                      todo={todo}
+                      active={todo.id === focusedId}
+                      onClick={centerOnTodo}
+                      onDelete={deleteTodo}
+                      classification={classifications.get(todo.id)}
+                    />
+                  ))}
+                </div>
+              ))
+            : todos.map((todo) => (
+                <SidebarItem
+                  key={todo.id}
+                  todo={todo}
+                  active={todo.id === focusedId}
+                  onClick={centerOnTodo}
+                  onDelete={deleteTodo}
+                  classification={classifications.get(todo.id)}
+                />
+              ))}
           {todos.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
               No notes yet
@@ -598,6 +671,7 @@ const App = () => {
                   cameraRef={cameraRef}
                   onUpdateDueDate={updateDueDate}
                   onUpdateRepeat={updateRepeat}
+                  classification={classifications.get(todo.id)}
                 />
               ))}
             </AnimatePresence>
