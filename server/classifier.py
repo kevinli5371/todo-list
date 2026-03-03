@@ -9,52 +9,60 @@ from models import TodoIn, ClassifiedTodo
 
 logger = logging.getLogger(__name__)
 
-MODEL = "llama3.2"
+MODEL = "llama3.2:1b"
 
 CATEGORIES = ["Work", "Personal", "Health", "Finance", "Learning", "Home", "Social", "Other"]
 
-SYSTEM_PROMPT = """\
-You are a productivity assistant that classifies todo items and ranks their importance.
+# Map common model synonyms → canonical category name (case-insensitive key lookup)
+_CATEGORY_SYNONYMS: dict[str, str] = {
+    # Work
+    "work": "Work", "job": "Work", "professional": "Work", "career": "Work",
+    "business": "Work", "office": "Work", "employment": "Work",
+    # Personal
+    "personal": "Personal", "self": "Personal", "life": "Personal",
+    # Health
+    "health": "Health", "medical": "Health", "fitness": "Health",
+    "wellness": "Health", "exercise": "Health", "mental health": "Health",
+    # Finance
+    "finance": "Finance", "financial": "Finance", "money": "Finance",
+    "budget": "Finance", "banking": "Finance", "investment": "Finance",
+    # Learning
+    "learning": "Learning", "education": "Learning", "study": "Learning",
+    "school": "Learning", "academic": "Learning", "course": "Learning",
+    "research": "Learning", "reading": "Learning",
+    # Home
+    "home": "Home", "household": "Home", "chores": "Home", "house": "Home",
+    "domestic": "Home", "cleaning": "Home", "errands": "Home",
+    # Social
+    "social": "Social", "family": "Social", "friends": "Social",
+    "relationship": "Social", "community": "Social", "entertainment": "Social",
+    # Other
+    "other": "Other", "miscellaneous": "Other", "misc": "Other",
+}
 
-For each todo item you will determine:
-1. category — exactly one of: Work, Personal, Health, Finance, Learning, Home, Social, Other
-2. importance — integer 1-10 (10 = most critical), factoring in:
-   - Due date proximity: overdue or within 24 hours = higher importance
-   - Repeat frequency: daily tasks are generally high-priority recurring commitments
-   - Keywords implying urgency: "urgent", "asap", "deadline", "doctor", "bill", "call", etc.
-   - Task nature: health and finance items tend to carry higher stakes
-   - Completed tasks: always score 1 regardless of other factors
-3. reasoning — one concise sentence explaining the classification and score
 
-Always return a JSON array. Never include markdown or explanatory text outside the JSON.\
-"""
+def _normalize_category(raw: str) -> str:
+    return _CATEGORY_SYNONYMS.get(raw.strip().lower(), "Other")
+
+SYSTEM_PROMPT = (
+    "Classify todo items. For each, return category (Work/Personal/Health/Finance/Learning/Home/Social/Other), "
+    "importance 1-10 (10=most urgent; consider due date, repeat, urgency keywords; completed=1), "
+    "and a one-sentence reasoning. Respond only with JSON."
+)
 
 
 def _build_user_prompt(todos: List[TodoIn]) -> str:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    serialized = [
-        {
-            "id": t.id,
-            "text": t.text,
-            "completed": t.completed,
-            "dueDate": t.dueDate,
-            "repeat": t.repeat,
-        }
+    items = [
+        {"id": t.id, "text": t.text, "done": t.completed, "due": t.dueDate, "repeat": t.repeat}
         for t in todos
     ]
 
-    example = json.dumps(
-        {"results": [{"id": 0, "category": "Work", "importance": 7, "reasoning": "Example reasoning."}]},
-        indent=2,
-    )
-
     return (
-        f"Current UTC time: {now}\n\n"
-        f"Classify these {len(todos)} todo items:\n"
-        f"{json.dumps(serialized, indent=2)}\n\n"
-        f"Return a JSON object with a 'results' key containing exactly {len(todos)} objects, one per todo, in the same order.\n"
-        f"Example format:\n{example}"
+        f"Now: {now}\n"
+        f"Todos: {json.dumps(items)}\n"
+        f'Return: {{"results":[{{"id":...,"category":"...","importance":...,"reasoning":"..."}}]}}'
     )
 
 
@@ -82,9 +90,7 @@ def _parse_response(raw: str, todos: List[TodoIn]) -> List[ClassifiedTodo]:
     id_to_result: dict[int, ClassifiedTodo] = {}
     for item in data:
         try:
-            category = item.get("category", "Other")
-            if category not in CATEGORIES:
-                category = "Other"
+            category = _normalize_category(item.get("category", "Other"))
             importance = max(1, min(10, int(item.get("importance", 5))))
             id_to_result[item["id"]] = ClassifiedTodo(
                 id=item["id"],

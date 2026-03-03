@@ -396,10 +396,14 @@ const App = () => {
 
   // Group todos by category for the sidebar (falls back to flat list when server is off)
   const groupedSidebar = useMemo(() => {
-    if (classifications.size === 0) return null;
+    // Only group todos that have actually been classified — skip unclassified ones
+    // so nothing ever incorrectly lands in "Other" during loading or while offline.
+    const classified = todos.filter((t) => classifications.has(t.id));
+    if (classified.length === 0) return null;
+
     const groups = {};
-    todos.forEach((todo) => {
-      const cat = classifications.get(todo.id)?.category ?? 'Other';
+    classified.forEach((todo) => {
+      const cat = classifications.get(todo.id).category;
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(todo);
     });
