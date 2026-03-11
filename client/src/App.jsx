@@ -337,51 +337,55 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         </div>
       </div>
 
-      {/* Date / repeat footer */}
-      <div className={`todo-footer ${(todo.dueDate || todo.repeat || showDatePicker || classification) ? 'has-data' : ''}`}>
-        {classification && (
-          <span
-            className="category-badge"
-            style={{ background: catColors?.bg, color: catColors?.text }}
-            title={`Rank #${classification.rank ?? classification.importance} in ${classification.category} — ${classification.reasoning}`}
+      {/* Single wrapper so footer + calendar collapse in one smooth motion */}
+      <div
+        className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || classification) ? 'is-open' : ''}`}
+      >
+        <div className="todo-footer">
+          {classification && (
+            <span
+              className="category-badge"
+              style={{ background: catColors?.bg, color: catColors?.text }}
+              title={`Rank #${classification.rank ?? classification.importance} in ${classification.category} — ${classification.reasoning}`}
+            >
+              <span className="category-dot" style={{ background: catColors?.dot }} />
+              {classification.category}
+              <span className="category-importance">#{classification.rank ?? classification.importance}</span>
+            </span>
+          )}
+          <button
+            className={`todo-meta-btn ${dateClass}`}
+            onClick={(e) => { e.stopPropagation(); setShowDatePicker(p => !p); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={todo.dueDate ? 'Edit date' : 'Add date'}
           >
-            <span className="category-dot" style={{ background: catColors?.dot }} />
-            {classification.category}
-            <span className="category-importance">#{classification.rank ?? classification.importance}</span>
-          </span>
+            <Calendar size={12} />
+            <span>{todo.dueDate ? formatDueDate(todo.dueDate) : 'Date'}</span>
+          </button>
+          <button
+            className={`todo-meta-btn ${todo.repeat ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const idx = REPEAT_OPTIONS.indexOf(todo.repeat ?? null);
+              onUpdateRepeat(todo.id, REPEAT_OPTIONS[(idx + 1) % REPEAT_OPTIONS.length]);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            title="Set repeat"
+          >
+            <RefreshCw size={12} />
+            <span>{todo.repeat ? REPEAT_LABELS[todo.repeat] : 'Repeat'}</span>
+          </button>
+        </div>
+        {showDatePicker && (
+          <div onMouseDown={(e) => e.stopPropagation()}>
+            <DatePickerPopup
+              value={todo.dueDate}
+              onChange={(iso) => onUpdateDueDate(todo.id, iso)}
+              onClear={() => { onUpdateDueDate(todo.id, null); setShowDatePicker(false); }}
+            />
+          </div>
         )}
-        <button
-          className={`todo-meta-btn ${dateClass}`}
-          onClick={(e) => { e.stopPropagation(); setShowDatePicker(p => !p); }}
-          onMouseDown={(e) => e.stopPropagation()}
-          title={todo.dueDate ? 'Edit date' : 'Add date'}
-        >
-          <Calendar size={12} />
-          <span>{todo.dueDate ? formatDueDate(todo.dueDate) : 'Date'}</span>
-        </button>
-        <button
-          className={`todo-meta-btn ${todo.repeat ? 'active' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            const idx = REPEAT_OPTIONS.indexOf(todo.repeat ?? null);
-            onUpdateRepeat(todo.id, REPEAT_OPTIONS[(idx + 1) % REPEAT_OPTIONS.length]);
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          title="Set repeat"
-        >
-          <RefreshCw size={12} />
-          <span>{todo.repeat ? REPEAT_LABELS[todo.repeat] : 'Repeat'}</span>
-        </button>
       </div>
-
-      {/* Custom date/time picker */}
-      {showDatePicker && (
-        <DatePickerPopup
-          value={todo.dueDate}
-          onChange={(iso) => onUpdateDueDate(todo.id, iso)}
-          onClear={() => { onUpdateDueDate(todo.id, null); setShowDatePicker(false); }}
-        />
-      )}
     </motion.div>
   );
 };
