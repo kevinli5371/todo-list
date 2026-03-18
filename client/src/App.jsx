@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft, Calendar, RefreshCw, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useClassify } from './hooks/useClassify';
@@ -8,14 +8,14 @@ const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', ye
 
 const CATEGORY_ORDER = ['Work', 'Personal', 'Health', 'Finance', 'Learning', 'Home', 'Social', 'Other'];
 const CATEGORY_COLORS = {
-  Work:     { bg: '#dbeafe', text: '#1d4ed8', dot: '#3b82f6' },
-  Personal: { bg: '#ede9fe', text: '#6d28d9', dot: '#8b5cf6' },
-  Health:   { bg: '#dcfce7', text: '#15803d', dot: '#22c55e' },
-  Finance:  { bg: '#fef3c7', text: '#b45309', dot: '#f59e0b' },
-  Learning: { bg: '#ccfbf1', text: '#0f766e', dot: '#14b8a6' },
-  Home:     { bg: '#ffedd5', text: '#c2410c', dot: '#f97316' },
-  Social:   { bg: '#fce7f3', text: '#be185d', dot: '#ec4899' },
-  Other:    { bg: '#f3f4f6', text: '#4b5563', dot: '#9ca3af' },
+  Work:     { bg: '#f5e6ee', text: '#9d4d6e', dot: '#c97b9a' },
+  Personal: { bg: '#f0e8f4', text: '#7d5a8c', dot: '#a882b8' },
+  Health:   { bg: '#eaf4f0', text: '#4a7d6a', dot: '#7ab3a0' },
+  Finance:  { bg: '#faf0ea', text: '#a66b52', dot: '#d4a090' },
+  Learning: { bg: '#e8f2f8', text: '#5a7a9a', dot: '#8aa8c4' },
+  Home:     { bg: '#faf2e8', text: '#a67c52', dot: '#d4b090' },
+  Social:   { bg: '#fce8f0', text: '#b85a7a', dot: '#e090b0' },
+  Other:    { bg: '#f2ecee', text: '#6d5a62', dot: '#a898a0' },
 };
 
 const formatDueDate = (iso) => {
@@ -203,6 +203,8 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
   const inputRef = useRef(null);
   const itemRef = useRef(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const isExpanded = isFocused || isHovered;
 
   const isOverdue = todo.dueDate && new Date(todo.dueDate) < new Date() && !todo.completed;
   const isSoon = todo.dueDate && !isOverdue && !todo.completed && (new Date(todo.dueDate) - new Date()) < 86400000;
@@ -221,6 +223,21 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
       return () => clearTimeout(timer);
     }
   }, [isFocused]);
+
+  // When expanded: set height before paint so single-line todos never jump.
+  // Use 1.5em for single-line (matches collapsed exactly); only grow when scrollHeight > one line.
+  useLayoutEffect(() => {
+    if (!isExpanded || !inputRef.current) return;
+    const ta = inputRef.current;
+    ta.style.height = '1.5em';
+    const oneLinePx = ta.offsetHeight;
+    if (ta.scrollHeight > oneLinePx + 1) {
+      ta.style.height = ta.scrollHeight + 'px';
+      ta.classList.remove('todo-input-single-line');
+    } else {
+      ta.classList.add('todo-input-single-line');
+    }
+  }, [isExpanded, todo.text]);
 
   const handleDragHandleMouseDown = (e) => {
     e.preventDefault();
@@ -279,7 +296,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
       }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={snappyTransition}
-      className="todo-item-canvas"
+      className={`todo-item-canvas ${isExpanded ? 'is-expanded' : ''}`}
       style={{
         position: 'absolute',
         left: todo.x,
@@ -288,6 +305,8 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         zIndex: isFocused ? 10 : 1,
       }}
       onMouseDown={(e) => { e.stopPropagation(); onFocus(todo.id); }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <div
@@ -311,8 +330,16 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
             rows={1}
             style={{ resize: 'none', overflow: 'hidden', cursor: 'text' }}
             onInput={(e) => {
-              e.target.style.height = 'auto';
-              e.target.style.height = e.target.scrollHeight + 'px';
+              if (!itemRef.current?.classList.contains('is-expanded')) return;
+              const ta = e.target;
+              ta.style.height = '1.5em';
+              const oneLinePx = ta.offsetHeight;
+              if (ta.scrollHeight > oneLinePx + 1) {
+                ta.style.height = ta.scrollHeight + 'px';
+                ta.classList.remove('todo-input-single-line');
+              } else {
+                ta.classList.add('todo-input-single-line');
+              }
             }}
           />
         </div>
@@ -339,7 +366,7 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
 
       {/* Single wrapper so footer + calendar collapse in one smooth motion */}
       <div
-        className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || classification) ? 'is-open' : ''}`}
+        className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || classification || isFocused) ? 'is-open' : ''}`}
       >
         <div className="todo-footer">
           {classification && (
@@ -655,6 +682,7 @@ const App = () => {
             backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`
           }}
         >
+          <div className="canvas-notebook-paper" aria-hidden />
           <motion.div
             style={{
               position: 'absolute',
@@ -663,7 +691,8 @@ const App = () => {
               width: '100%',
               height: '100%',
               pointerEvents: 'none',
-              transformOrigin: '0 0'
+              transformOrigin: '0 0',
+              zIndex: 1
             }}
             animate={{
               x: -camera.x * camera.zoom,

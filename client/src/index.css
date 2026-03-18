@@ -1,15 +1,20 @@
 :root {
-  --sidebar-bg: #f6f6f6;
-  --sidebar-bg-translucent: rgba(246, 246, 246, 0.82);
-  --canvas-bg: #ffffff;
-  --accent-color: #e4af0a;
-  --border-color: #e5e5e5;
-  --text-primary: #1c1c1e;
-  --text-secondary: #8e8e93;
-  --selection-bg: #fde68a;
-  --active-sidebar-bg: #e5e5e5;
-  --toolbar-bg: rgba(255, 255, 255, 0.85);
-  --notebook-dot: rgba(0, 0, 0, 0.08);
+  /* Pastel pink notebook palette */
+  --sidebar-bg: #faf2f6;
+  --sidebar-bg-translucent: rgba(250, 242, 246, 0.9);
+  --canvas-bg: #fff8fa;
+  --paper-card: #fffefc;
+  --accent-color: #d4789a;
+  --accent-rgb: 212, 120, 154;
+  --border-color: #f0dde6;
+  --text-primary: #3a2d33;
+  --text-secondary: #8a7380;
+  --selection-bg: #fce4ee;
+  --active-sidebar-bg: #f3e0ea;
+  --toolbar-bg: rgba(255, 248, 250, 0.92);
+  --notebook-dot: rgba(212, 120, 154, 0.1);
+  --notebook-line: rgba(212, 120, 154, 0.055);
+  --notebook-margin: rgba(212, 120, 154, 0.32);
 }
 
 * {
@@ -25,7 +30,7 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -255,17 +260,35 @@ body {
   cursor: grab;
 }
 
+/* Lined notebook paper + rose margin rule (under dot grid) */
+.canvas-notebook-paper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(90deg, transparent 46px, var(--notebook-margin) 46px, var(--notebook-margin) 48px, transparent 48px),
+    repeating-linear-gradient(
+      transparent 0,
+      transparent 27px,
+      var(--notebook-line) 27px,
+      var(--notebook-line) 28px
+    );
+  background-position: 0 0, 0 14px;
+}
+
 .canvas-container:active {
   cursor: grabbing;
 }
 
 .todo-item-canvas {
-  background: white;
+  background: var(--paper-card);
   padding: 12px 16px;
   min-width: 240px;
-  border-radius: 10px;
+  border-radius: 8px;
   border: 1px solid var(--border-color);
-  transition: border-color 0.1s cubic-bezier(0.4, 0, 1, 1);
+  box-shadow: 0 1px 3px rgba(212, 120, 154, 0.06);
+  transition: border-color 0.1s cubic-bezier(0.4, 0, 1, 1), box-shadow 0.1s cubic-bezier(0.4, 0, 1, 1);
   user-select: auto;
 }
 
@@ -283,6 +306,22 @@ body {
   outline: none;
   font-family: inherit;
   line-height: 1.5;
+  box-sizing: border-box;
+  transition: height 0.14s cubic-bezier(0.4, 0, 0.2, 1), max-height 0.14s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Collapsed: single line with overflow hidden when not focused/hovered */
+.todo-item-canvas:not(.is-expanded) .todo-input {
+  height: 1.5em !important;
+  min-height: 1.5em;
+  max-height: 1.5em !important;
+  overflow: hidden;
+  display: block;
+}
+
+/* No height transition for single-line so hover never causes a size jump */
+.todo-input.todo-input-single-line {
+  transition: none;
 }
 
 .todo-input.completed {
@@ -365,7 +404,6 @@ body {
     margin-top 0.28s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.todo-item-canvas:hover .todo-footer-wrapper,
 .todo-footer-wrapper.is-open {
   max-height: 320px;
   opacity: 1;
@@ -414,8 +452,8 @@ body {
 
 .todo-meta-btn.active {
   color: var(--accent-color);
-  border-color: rgba(228, 175, 10, 0.4);
-  background: rgba(228, 175, 10, 0.08);
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 
 .todo-meta-btn.soon {
@@ -435,10 +473,10 @@ body {
 .dp-popup {
   margin-top: 10px;
   padding: 10px 10px 8px;
-  background: white;
+  background: var(--paper-card);
   border: 1px solid var(--border-color);
   border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(212, 120, 154, 0.1);
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
@@ -507,7 +545,7 @@ body {
 }
 
 .dp-day:hover {
-  background: rgba(228, 175, 10, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
 }
 
 .dp-today {
@@ -549,7 +587,7 @@ body {
   font-size: 12px;
   font-family: inherit;
   color: var(--text-primary);
-  background: white;
+  background: var(--paper-card);
   outline: none;
   -moz-appearance: textfield;
 }
@@ -584,7 +622,7 @@ body {
 }
 
 .dp-ampm:hover {
-  background: rgba(228, 175, 10, 0.1);
+  background: rgba(var(--accent-rgb), 0.12);
   border-color: var(--accent-color);
   color: var(--accent-color);
 }
@@ -622,7 +660,7 @@ body {
   gap: 3px;
   opacity: 0;
   cursor: grab;
-  align-self: center;
+  align-self: flex-start;
   flex-shrink: 0;
   padding: 2px;
   border-radius: 3px;
