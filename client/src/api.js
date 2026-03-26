@@ -2,6 +2,21 @@ import { supabase } from './supabaseClient';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+/** Avoid infinite "Loading…" when the API is down or the server hangs on DB connect */
+const REQUEST_TIMEOUT_MS = 12_000;
+
+function timeoutSignal(existing) {
+  if (existing) {
+    return { signal: existing, clear: () => {} };
+  }
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), clear: () => {} };
+  }
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  return { signal: ctrl.signal, clear: () => clearTimeout(tid) };
+}
+
 async function getAccessToken() {
   const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token ?? null;
@@ -15,7 +30,14 @@ async function request(path, options = {}) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(options.body);
   }
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const { signal: optSignal, ...rest } = options;
+  const { signal, clear } = timeoutSignal(optSignal);
+  let res;
+  try {
+    res = await fetch(`${API_URL}${path}`, { ...rest, headers, signal });
+  } finally {
+    clear();
+  }
   if (res.status === 401) {
     await supabase.auth.signOut();
     throw new Error('UNAUTHORIZED');

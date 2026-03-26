@@ -562,25 +562,39 @@ const App = () => {
     let cancelled = false;
     let subscription = { unsubscribe() {} };
 
+    const AUTH_INIT_TIMEOUT = 8_000;
+
+    const sessionPromise = supabase.auth.getSession().then(r => r.data.session);
+    const timeoutPromise = new Promise(resolve =>
+      setTimeout(() => resolve(null), AUTH_INIT_TIMEOUT)
+    );
+
     (async () => {
+      let session = null;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        session = await Promise.race([sessionPromise, timeoutPromise]);
         if (cancelled) return;
-        if (session?.access_token) {
-          try {
-            const profile = await fetchMe();
-            if (!cancelled) setMe(profile);
-          } catch {
-            if (!cancelled) setMe(null);
-          }
-        } else {
-          setMe(null);
-        }
       } catch (e) {
-        console.error('Auth init failed:', e);
+        console.warn('getSession failed:', e?.message || e);
+        if (!cancelled) {
+          setMe(null);
+          setAuthReady(true);
+        }
+        return;
+      }
+
+      if (!session?.access_token) {
+        if (!cancelled) { setMe(null); setAuthReady(true); }
+        return;
+      }
+
+      try {
+        const profile = await fetchMe();
+        if (!cancelled) setMe(profile);
+      } catch (e) {
+        console.warn('Could not load profile (API off, timeout, or bad token):', e?.message || e);
         if (!cancelled) setMe(null);
       } finally {
-        // Avoid StrictMode first unmount leaving the app stuck on "Loading…"
         if (!cancelled) setAuthReady(true);
       }
     })();
