@@ -671,15 +671,23 @@ const App = () => {
 
   useEffect(() => {
     if (!me) return;
-    const tick = async () => {
-      if (document.activeElement?.tagName === 'TEXTAREA') return;
-      try {
-        const data = await fetchTodos(effectiveScope);
-        setTodos(data);
-      } catch (_) { /* offline or transient */ }
+    const ownerId = effectiveScope === 'partner' ? me.partner?.id : me.id;
+    if (!ownerId) return;
+
+    const channel = supabase
+      .channel(`todos:owner:${ownerId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${ownerId}` },
+        () => {
+          fetchTodos(effectiveScope).then(setTodos).catch(() => {});
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
-    const id = setInterval(tick, 5000);
-    return () => clearInterval(id);
   }, [me, effectiveScope]);
 
   const createNote = useCallback(async (x, y, initialText = '') => {
