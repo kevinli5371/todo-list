@@ -1,22 +1,21 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import { LayoutGrid, List, Check, Trash2, Plus, ZoomIn, ZoomOut, GripVertical, Search, Edit, PanelLeft, Calendar, RefreshCw, X } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { Check, Trash2, ZoomIn, ZoomOut, Edit, PanelLeft, Calendar, RefreshCw, Users, LogOut, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useClassify } from './hooks/useClassify';
+import {
+  fetchMe,
+  pairWithCode,
+  fetchTodos,
+  createTodoRemote,
+  patchTodoRemote,
+  deleteTodoRemote,
+} from './api';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
+
+const TEXTAREA_FIELD_SIZING =
+  typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
 
 const REPEAT_OPTIONS = [null, 'daily', 'weekly', 'monthly', 'yearly'];
 const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
-
-const CATEGORY_ORDER = ['Work', 'Personal', 'Health', 'Finance', 'Learning', 'Home', 'Social', 'Other'];
-const CATEGORY_COLORS = {
-  Work:     { bg: '#f5e6ee', text: '#9d4d6e', dot: '#c97b9a' },
-  Personal: { bg: '#f0e8f4', text: '#7d5a8c', dot: '#a882b8' },
-  Health:   { bg: '#eaf4f0', text: '#4a7d6a', dot: '#7ab3a0' },
-  Finance:  { bg: '#faf0ea', text: '#a66b52', dot: '#d4a090' },
-  Learning: { bg: '#e8f2f8', text: '#5a7a9a', dot: '#8aa8c4' },
-  Home:     { bg: '#faf2e8', text: '#a67c52', dot: '#d4b090' },
-  Social:   { bg: '#fce8f0', text: '#b85a7a', dot: '#e090b0' },
-  Other:    { bg: '#f2ecee', text: '#6d5a62', dot: '#a898a0' },
-};
 
 const formatDueDate = (iso) => {
   const d = new Date(iso);
@@ -158,11 +157,10 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
   );
 };
 
-const SidebarItem = ({ todo, active, onClick, onDelete, classification }) => {
+const SidebarItem = ({ todo, active, onClick, onDelete, readOnly }) => {
   const title = todo.text.split('\n')[0] || 'New Item';
   const rest = todo.text.split('\n').slice(1).join(' ') || 'No additional text';
   const date = new Date(todo.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  const colors = classification ? CATEGORY_COLORS[classification.category] : null;
 
   return (
     <div
@@ -174,23 +172,20 @@ const SidebarItem = ({ todo, active, onClick, onDelete, classification }) => {
           <div className="sidebar-item-title">{title}</div>
           <div className="sidebar-item-meta">
             <span>{date}</span>
-            {classification && (
-              <span className="sidebar-importance" style={{ color: colors?.text }}>
-                #{classification.rank ?? classification.importance}
-              </span>
-            )}
             <span className="sidebar-item-preview">{rest}</span>
           </div>
         </div>
-        <button
-          className="sidebar-delete-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(todo.id);
-          }}
-        >
-          <Trash2 size={14} />
-        </button>
+        {!readOnly && (
+          <button
+            className="sidebar-delete-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(todo.id);
+            }}
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -198,21 +193,34 @@ const SidebarItem = ({ todo, active, onClick, onDelete, classification }) => {
 
 const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
 
+/** Checkbox + gaps + delete + drag handle + horizontal padding — add to text width for card size */
+const TODO_CARD_CHROME_W = 132;
+
 // Helper Component for Individual Todo Items to handle focus and drag
-const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPositionChange, cameraRef, onUpdateDueDate, onUpdateRepeat, classification }) => {
+const TodoItem = ({
+  todo,
+  isFocused,
+  onUpdate,
+  onToggle,
+  onDelete,
+  onFocus,
+  onPositionChange,
+  cameraRef,
+  onUpdateDueDate,
+  onUpdateRepeat,
+  readOnly,
+}) => {
   const inputRef = useRef(null);
   const itemRef = useRef(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
-  const isExpanded = isFocused || isHovered;
+  const isExpanded = isFocused && !readOnly;
 
   const isOverdue = todo.dueDate && new Date(todo.dueDate) < new Date() && !todo.completed;
   const isSoon = todo.dueDate && !isOverdue && !todo.completed && (new Date(todo.dueDate) - new Date()) < 86400000;
   const dateClass = isOverdue ? 'overdue' : isSoon ? 'soon' : todo.dueDate ? 'active' : '';
-  const catColors = classification ? CATEGORY_COLORS[classification.category] : null;
 
   useEffect(() => {
-    if (isFocused && inputRef.current) {
+    if (isFocused && !readOnly && inputRef.current) {
       const timer = setTimeout(() => {
         if (inputRef.current) {
           inputRef.current.focus();
@@ -222,24 +230,60 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [isFocused]);
+  }, [isFocused, readOnly]);
 
-  // When expanded: set height before paint so single-line todos never jump.
-  // Use 1.5em for single-line (matches collapsed exactly); only grow when scrollHeight > one line.
+  // Clear inline height when expanded so CSS field-sizing: content controls size (no flicker).
+  // Legacy browsers: set height once on expand only.
   useLayoutEffect(() => {
-    if (!isExpanded || !inputRef.current) return;
     const ta = inputRef.current;
+    if (!ta) return;
+    if (!isExpanded) {
+      ta.style.height = '';
+      return;
+    }
+    if (TEXTAREA_FIELD_SIZING) {
+      ta.style.height = '';
+      return;
+    }
     ta.style.height = '1.5em';
     const oneLinePx = ta.offsetHeight;
     if (ta.scrollHeight > oneLinePx + 1) {
+      ta.style.height = 'auto';
       ta.style.height = ta.scrollHeight + 'px';
-      ta.classList.remove('todo-input-single-line');
-    } else {
-      ta.classList.add('todo-input-single-line');
     }
-  }, [isExpanded, todo.text]);
+  }, [isExpanded]);
+
+  // Widen card with long titles (first line when collapsed; max line when expanded)
+  useLayoutEffect(() => {
+    const ta = inputRef.current;
+    const box = itemRef.current;
+    if (!ta || !box) return;
+    const measure = () => {
+      const style = getComputedStyle(ta);
+      const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const ctx = document.createElement('canvas').getContext('2d');
+      if (!ctx) return;
+      ctx.font = font;
+      const lines = (todo.text || '').split('\n');
+      const sample = lines.length && lines[0].length ? lines[0] : 'New Item';
+      let textW = ctx.measureText(sample).width;
+      if (isExpanded && lines.length > 1) {
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].length ? lines[i] : ' ';
+          textW = Math.max(textW, ctx.measureText(line).width);
+        }
+      }
+      const maxW = Math.max(240, Math.floor(window.innerWidth * 0.9) - 48);
+      const w = Math.min(maxW, Math.max(240, Math.ceil(textW) + TODO_CARD_CHROME_W));
+      box.style.width = `${w}px`;
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [todo.text, isExpanded]);
 
   const handleDragHandleMouseDown = (e) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     onFocus(todo.id);
@@ -292,11 +336,11 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{
         opacity: 1,
-        scale: isFocused ? 1.01 : 1,
+        scale: isFocused && !readOnly ? 1.01 : 1,
       }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={snappyTransition}
-      className={`todo-item-canvas ${isExpanded ? 'is-expanded' : ''}`}
+      className={`todo-item-canvas ${isExpanded ? 'is-expanded' : ''} ${readOnly ? 'todo-readonly' : ''}`}
       style={{
         position: 'absolute',
         left: todo.x,
@@ -304,16 +348,17 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         pointerEvents: 'auto',
         zIndex: isFocused ? 10 : 1,
       }}
-      onMouseDown={(e) => { e.stopPropagation(); onFocus(todo.id); }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        if (!readOnly) onFocus(todo.id);
+      }}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <div
-          className={`checkbox ${todo.completed ? 'checked' : ''}`}
+          className={`checkbox ${todo.completed ? 'checked' : ''} ${readOnly ? 'checkbox-readonly' : ''}`}
           onClick={(e) => {
             e.stopPropagation();
-            onToggle(todo.id);
+            if (!readOnly) onToggle(todo.id);
           }}
           style={{ marginTop: 4 }}
         >
@@ -322,64 +367,62 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
         <div style={{ flex: 1 }}>
           <textarea
             ref={inputRef}
+            readOnly={readOnly}
             className={`todo-input ${todo.completed ? 'completed' : ''}`}
             value={todo.text}
             onChange={(e) => onUpdate(todo.id, e.target.value)}
             onMouseDown={(e) => e.stopPropagation()}
             placeholder="New Item"
             rows={1}
-            style={{ resize: 'none', overflow: 'hidden', cursor: 'text' }}
+            style={{ resize: 'none', overflow: 'hidden', cursor: readOnly ? 'default' : 'text' }}
             onInput={(e) => {
+              if (TEXTAREA_FIELD_SIZING) return;
               if (!itemRef.current?.classList.contains('is-expanded')) return;
               const ta = e.target;
-              ta.style.height = '1.5em';
-              const oneLinePx = ta.offsetHeight;
-              if (ta.scrollHeight > oneLinePx + 1) {
-                ta.style.height = ta.scrollHeight + 'px';
-                ta.classList.remove('todo-input-single-line');
-              } else {
-                ta.classList.add('todo-input-single-line');
-              }
+              ta.style.height = 'auto';
+              ta.style.height = ta.scrollHeight + 'px';
             }}
           />
         </div>
-        <button
-          className="delete-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(todo.id);
-          }}
-        >
-          <Trash2 size={16} />
-        </button>
-        <div
-          className="drag-handle"
-          onMouseDown={handleDragHandleMouseDown}
-        >
-          {[0, 1, 2].map(row => (
-            [0, 1].map(col => (
-              <div key={`${row}-${col}`} className="drag-dot" />
-            ))
-          ))}
-        </div>
+        {!readOnly && (
+          <button
+            className="delete-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(todo.id);
+            }}
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
+        {!readOnly && (
+          <div
+            className="drag-handle"
+            onMouseDown={handleDragHandleMouseDown}
+          >
+            {[0, 1, 2].map(row => (
+              [0, 1].map(col => (
+                <div key={`${row}-${col}`} className="drag-dot" />
+              ))
+            ))}
+          </div>
+        )}
       </div>
 
+      {readOnly && (todo.dueDate || todo.repeat) && (
+        <div className="todo-readonly-meta">
+          {todo.dueDate && <span>{formatDueDate(todo.dueDate)}</span>}
+          {todo.dueDate && todo.repeat && <span> · </span>}
+          {todo.repeat && <span>{REPEAT_LABELS[todo.repeat]}</span>}
+        </div>
+      )}
+
       {/* Single wrapper so footer + calendar collapse in one smooth motion */}
+      {!readOnly && (
       <div
-        className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || classification || isFocused) ? 'is-open' : ''}`}
+        className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || isFocused) ? 'is-open' : ''}`}
       >
         <div className="todo-footer">
-          {classification && (
-            <span
-              className="category-badge"
-              style={{ background: catColors?.bg, color: catColors?.text }}
-              title={`Rank #${classification.rank ?? classification.importance} in ${classification.category} — ${classification.reasoning}`}
-            >
-              <span className="category-dot" style={{ background: catColors?.dot }} />
-              {classification.category}
-              <span className="category-importance">#{classification.rank ?? classification.importance}</span>
-            </span>
-          )}
           <button
             className={`todo-meta-btn ${dateClass}`}
             onClick={(e) => { e.stopPropagation(); setShowDatePicker(p => !p); }}
@@ -413,103 +456,331 @@ const TodoItem = ({ todo, isFocused, onUpdate, onToggle, onDelete, onFocus, onPo
           </div>
         )}
       </div>
+      )}
     </motion.div>
   );
 };
 
+const AuthScreen = () => {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [invite, setInvite] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr('');
+    setBusy(true);
+    try {
+      if (mode === 'register') {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        if (!data.session) {
+          setErr('Check your email to confirm your account, then log in.');
+          return;
+        }
+        if (invite.trim()) {
+          try {
+            await pairWithCode(invite.trim());
+          } catch (pe) {
+            throw new Error(pe.message || 'Signed up but pairing failed — use Pair in the sidebar after you log in.');
+          }
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (er) {
+      setErr(er.message || 'Something went wrong');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth-overlay">
+      <form className="auth-card" onSubmit={submit}>
+        <h1 className="auth-title">Shared todo list</h1>
+        <p className="auth-subtitle">Sign in to your canvas. Pair with one friend using an invite code.</p>
+        {!isSupabaseConfigured && (
+          <div className="auth-error" style={{ marginBottom: 16 }}>
+            Supabase is not configured. Add <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to{' '}
+            <code>client/.env</code>, then stop and restart <code>npm run dev</code> (Vite only reads env at startup).
+          </div>
+        )}
+        <div className="auth-tabs">
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log in</button>
+          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button>
+        </div>
+        <label className="auth-label">
+          Email
+          <input className="auth-input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label className="auth-label">
+          Password (min 8 characters)
+          <input className="auth-input" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+        </label>
+        {mode === 'register' && (
+          <label className="auth-label">
+            Friend&apos;s invite code (optional)
+            <input className="auth-input" type="text" placeholder="e.g. A1B2C3D4" value={invite} onChange={(e) => setInvite(e.target.value)} autoComplete="off" />
+          </label>
+        )}
+        {err && <div className="auth-error">{err}</div>}
+        <button type="submit" className="auth-submit" disabled={busy}>
+          {busy ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Log in'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
 const App = () => {
-  const [todos, setTodos] = useState(() => {
-    const saved = localStorage.getItem('spatial-todos');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const { classifications, isLoading: classifyLoading } = useClassify(todos);
-
-  // Group todos by category for the sidebar (falls back to flat list when server is off)
-  const groupedSidebar = useMemo(() => {
-    // Only group todos that have actually been classified — skip unclassified ones
-    // so nothing ever incorrectly lands in "Other" during loading or while offline.
-    const classified = todos.filter((t) => classifications.has(t.id));
-    if (classified.length === 0) return null;
-
-    const groups = {};
-    classified.forEach((todo) => {
-      const cat = classifications.get(todo.id).category;
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(todo);
-    });
-    // Sort within each group by importance descending
-    Object.values(groups).forEach((g) =>
-      g.sort((a, b) => (classifications.get(b.id)?.importance ?? 0) - (classifications.get(a.id)?.importance ?? 0))
-    );
-    return groups;
-  }, [todos, classifications]);
+  const [me, setMe] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [todos, setTodos] = useState([]);
+  const [listScope, setListScope] = useState('mine');
+  const [pairInput, setPairInput] = useState('');
+  const [pairErr, setPairErr] = useState('');
 
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
   const [focusedId, setFocusedId] = useState(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const canvasRef = useRef(null);
+  const textTimers = useRef({});
 
-  // Panning state
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const dragStartPos = useRef({ x: 0, y: 0 });
+
+  const cameraStorageKey = me ? `spatial-camera-${me.id}` : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    let subscription = { unsubscribe() {} };
+
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (cancelled) return;
+        if (session?.access_token) {
+          try {
+            const profile = await fetchMe();
+            if (!cancelled) setMe(profile);
+          } catch {
+            if (!cancelled) setMe(null);
+          }
+        } else {
+          setMe(null);
+        }
+      } catch (e) {
+        console.error('Auth init failed:', e);
+        if (!cancelled) setMe(null);
+      } finally {
+        // Avoid StrictMode first unmount leaving the app stuck on "Loading…"
+        if (!cancelled) setAuthReady(true);
+      }
+    })();
+
+    try {
+      const { data } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (cancelled) return;
+        if (session?.access_token) {
+          try {
+            const profile = await fetchMe();
+            if (!cancelled) setMe(profile);
+          } catch {
+            if (!cancelled) setMe(null);
+          }
+        } else {
+          setMe(null);
+        }
+      });
+      subscription = data.subscription;
+    } catch (e) {
+      console.error('onAuthStateChange failed:', e);
+    }
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cameraStorageKey) return;
+    try {
+      const raw = localStorage.getItem(cameraStorageKey);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (typeof c?.x === 'number' && typeof c?.y === 'number' && typeof c?.zoom === 'number') {
+          setCamera(c);
+        }
+      }
+    } catch (_) { /* ignore */ }
+  }, [cameraStorageKey]);
+
+  useEffect(() => {
+    if (!cameraStorageKey) return;
+    localStorage.setItem(cameraStorageKey, JSON.stringify(camera));
+  }, [camera, cameraStorageKey]);
+
+  useEffect(() => {
+    if (me && !me.partner && listScope === 'partner') {
+      setListScope('mine');
+    }
+  }, [me, listScope]);
 
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
 
+  const effectiveScope = me?.partner ? listScope : 'mine';
+  const readOnlyCanvas = effectiveScope === 'partner';
+
   useEffect(() => {
-    localStorage.setItem('spatial-todos', JSON.stringify(todos));
-  }, [todos]);
+    if (!me) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchTodos(effectiveScope);
+        if (!cancelled) setTodos(data);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [me, effectiveScope]);
 
-  const updateTodoPosition = (id, x, y) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, x, y } : t));
-  };
-
-  const updateDueDate = (id, dueDate) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, dueDate } : t));
-  };
-
-  const updateRepeat = (id, repeat) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, repeat } : t));
-  };
-
-  const createNote = (x, y, initialText = '') => {
-    const sidebarWidth = showSidebar ? 280 : 0;
-    const id = Date.now();
-    const newTodo = {
-      id,
-      text: initialText,
-      x: x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120),
-      y: y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20),
-      completed: false,
-      timestamp: new Date().toISOString()
+  useEffect(() => {
+    if (!me) return;
+    const tick = async () => {
+      if (document.activeElement?.tagName === 'TEXTAREA') return;
+      try {
+        const data = await fetchTodos(effectiveScope);
+        setTodos(data);
+      } catch (_) { /* offline or transient */ }
     };
-    setTodos(prev => [newTodo, ...prev]);
-    setFocusedId(id);
-    return id;
-  };
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [me, effectiveScope]);
+
+  const createNote = useCallback(async (x, y, initialText = '') => {
+    if (!me || readOnlyCanvas) return;
+    const sidebarWidth = showSidebar ? 280 : 0;
+    const worldX = x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120);
+    const worldY = y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20);
+    const payload = {
+      text: initialText,
+      x: worldX,
+      y: worldY,
+      completed: false,
+      timestamp: new Date().toISOString(),
+    };
+    try {
+      const created = await createTodoRemote(payload);
+      setTodos((prev) => [created, ...prev]);
+      setFocusedId(created.id);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [me, readOnlyCanvas, camera, showSidebar]);
 
   useEffect(() => {
+    if (!me || readOnlyCanvas) return;
     const handleGlobalKeyDown = (e) => {
-      // Ignore if user is already typing in an input or textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-      // Ignore modifier keys
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      // Only trigger for single printable characters
       if (e.key.length === 1) {
         e.preventDefault();
         createNote(null, null, e.key);
       }
     };
-
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [camera, showSidebar]); // Re-bind if camera/sidebar change to get correct center position
+  }, [me, readOnlyCanvas, createNote]);
+
+  const updateTodoPosition = (id, x, y) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, x, y } : t)));
+    if (!readOnlyCanvas) {
+      patchTodoRemote(id, { x, y }).catch((err) => console.error(err));
+    }
+  };
+
+  const updateDueDate = (id, dueDate) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, dueDate } : t)));
+    if (!readOnlyCanvas) {
+      patchTodoRemote(id, { dueDate }).catch((err) => console.error(err));
+    }
+  };
+
+  const updateRepeat = (id, repeat) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, repeat } : t)));
+    if (!readOnlyCanvas) {
+      patchTodoRemote(id, { repeat }).catch((err) => console.error(err));
+    }
+  };
+
+  const updateTodoText = (id, text) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, text } : t)));
+    if (readOnlyCanvas) return;
+    clearTimeout(textTimers.current[id]);
+    textTimers.current[id] = setTimeout(() => {
+      patchTodoRemote(id, { text }).catch((err) => console.error(err));
+      delete textTimers.current[id];
+    }, 450);
+  };
+
+  const toggleComplete = (id) => {
+    if (readOnlyCanvas) return;
+    setTodos((prev) => {
+      const t = prev.find((x) => x.id === id);
+      if (!t) return prev;
+      const completed = !t.completed;
+      patchTodoRemote(id, { completed }).catch((err) => console.error(err));
+      return prev.map((x) => (x.id === id ? { ...x, completed } : x));
+    });
+  };
+
+  const deleteTodo = async (id) => {
+    setTodos((prev) => prev.filter((t) => t.id !== id));
+    try {
+      await deleteTodoRemote(id);
+    } catch (e) {
+      console.error(e);
+      try {
+        const data = await fetchTodos(effectiveScope);
+        setTodos(data);
+      } catch (_) { /* ignore */ }
+    }
+  };
+
+  const handlePair = async (e) => {
+    e.preventDefault();
+    setPairErr('');
+    try {
+      const profile = await pairWithCode(pairInput.trim());
+      setMe(profile);
+      setPairInput('');
+    } catch (er) {
+      setPairErr(er.message || 'Could not pair');
+    }
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setMe(null);
+    setTodos([]);
+    setFocusedId(null);
+  };
+
+  const copyInvite = () => {
+    if (!me?.invite_code) return;
+    navigator.clipboard.writeText(me.invite_code).catch(() => {});
+  };
 
   const handleWheel = (e) => {
     if (e.ctrlKey || e.metaKey) {
@@ -565,7 +836,7 @@ const App = () => {
   };
 
   const handleDoubleClick = (e) => {
-    if (e.target !== canvasRef.current) return;
+    if (readOnlyCanvas || e.target !== canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const worldX = camera.x + (e.clientX - rect.left) / camera.zoom - 120;
     const worldY = camera.y + (e.clientY - rect.top) / camera.zoom - 20;
@@ -577,87 +848,130 @@ const App = () => {
     setCamera({
       x: todo.x - (rect.width / 2) / camera.zoom + 120,
       y: todo.y - (rect.height / 2) / camera.zoom + 40,
-      zoom: camera.zoom
+      zoom: camera.zoom,
     });
     setFocusedId(todo.id);
   };
 
-  const updateTodoText = (id, text) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, text } : t));
-  };
+  if (!authReady) {
+    return (
+      <div className="auth-overlay auth-overlay--loading">
+        <p className="auth-loading-text">Loading…</p>
+      </div>
+    );
+  }
 
-  const toggleComplete = (id) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-  };
+  if (!me) {
+    return <AuthScreen />;
+  }
 
-  const deleteTodo = (id) => {
-    setTodos(prev => prev.filter(t => t.id !== id));
-  };
+  const partnerEmail = me.partner?.email ?? '';
+  const partnerShort = partnerEmail ? partnerEmail.split('@')[0] : '';
 
   return (
     <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
       <aside className="sidebar">
         <div className="sidebar-header">
-          Notes
-          {classifyLoading && <span className="classify-spinner" title="Classifying…" />}
+          {readOnlyCanvas ? `${partnerShort || 'Partner'}'s list` : 'Your list'}
         </div>
         <div className="sidebar-list">
-          {groupedSidebar
-            ? CATEGORY_ORDER.filter((cat) => groupedSidebar[cat]).map((cat) => (
-                <div key={cat} className="sidebar-group">
-                  <div className="sidebar-group-header">
-                    <span className="sidebar-group-dot" style={{ background: CATEGORY_COLORS[cat].dot }} />
-                    {cat}
-                    <span className="sidebar-group-count">{groupedSidebar[cat].length}</span>
-                  </div>
-                  {groupedSidebar[cat].map((todo) => (
-                    <SidebarItem
-                      key={todo.id}
-                      todo={todo}
-                      active={todo.id === focusedId}
-                      onClick={centerOnTodo}
-                      onDelete={deleteTodo}
-                      classification={classifications.get(todo.id)}
-                    />
-                  ))}
-                </div>
-              ))
-            : todos.map((todo) => (
-                <SidebarItem
-                  key={todo.id}
-                  todo={todo}
-                  active={todo.id === focusedId}
-                  onClick={centerOnTodo}
-                  onDelete={deleteTodo}
-                  classification={classifications.get(todo.id)}
-                />
-              ))}
+          {todos.map((todo) => (
+            <SidebarItem
+              key={todo.id}
+              todo={todo}
+              active={todo.id === focusedId}
+              onClick={centerOnTodo}
+              onDelete={deleteTodo}
+              readOnly={readOnlyCanvas}
+            />
+          ))}
           {todos.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
-              No notes yet
+              {readOnlyCanvas ? 'No items yet' : 'No notes yet'}
             </div>
           )}
+        </div>
+        <div className="sidebar-account">
+          <div className="sidebar-account-email">{me.email}</div>
+          {me.partner ? (
+            <div className="sidebar-paired">Paired with {me.partner.email}</div>
+          ) : (
+            <>
+              <div className="sidebar-invite-label">Your invite code</div>
+              <div className="sidebar-invite-row">
+                <code className="sidebar-invite-code">{me.invite_code}</code>
+                <button type="button" className="sidebar-icon-btn" onClick={copyInvite} title="Copy code">
+                  <Copy size={16} />
+                </button>
+              </div>
+              <p className="sidebar-hint">Share this code with one friend. They can enter it when signing up or below after logging in.</p>
+              <form className="sidebar-pair-form" onSubmit={handlePair}>
+                <input
+                  className="auth-input auth-input--compact"
+                  placeholder="Enter friend's code"
+                  value={pairInput}
+                  onChange={(e) => setPairInput(e.target.value)}
+                  autoComplete="off"
+                />
+                <button type="submit" className="auth-submit auth-submit--small">Pair</button>
+              </form>
+              {pairErr && <div className="auth-error auth-error--compact">{pairErr}</div>}
+            </>
+          )}
+          <button type="button" className="sidebar-logout" onClick={logout}>
+            <LogOut size={16} />
+            Log out
+          </button>
         </div>
       </aside>
 
       <main className="main-area">
         <header className="toolbar">
           <button
+            type="button"
             className={`toolbar-btn ${!showSidebar ? 'active' : ''}`}
             onClick={() => setShowSidebar(!showSidebar)}
-            title={showSidebar ? "Hide Sidebar" : "Show Sidebar"}
+            title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
             style={{ marginRight: 'auto' }}
           >
             <PanelLeft size={20} />
           </button>
-          <button className="toolbar-btn" onClick={() => createNote()} title="New Item">
+          {me.partner && (
+            <div className="toolbar-list-toggle" role="group" aria-label="Whose list to view">
+              <button
+                type="button"
+                className={`toolbar-seg ${effectiveScope === 'mine' ? 'active' : ''}`}
+                onClick={() => { setListScope('mine'); setFocusedId(null); }}
+              >
+                Yours
+              </button>
+              <button
+                type="button"
+                className={`toolbar-seg ${effectiveScope === 'partner' ? 'active' : ''}`}
+                onClick={() => { setListScope('partner'); setFocusedId(null); }}
+              >
+                <span className="toolbar-seg-inner">
+                  <Users size={16} aria-hidden />
+                  {partnerShort || 'Theirs'}
+                </span>
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => createNote()}
+            title={readOnlyCanvas ? 'Switch to your list to add items' : 'New item'}
+            disabled={readOnlyCanvas}
+            style={{ opacity: readOnlyCanvas ? 0.4 : 1 }}
+          >
             <Edit size={20} />
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-            <button className="toolbar-btn" onClick={() => setCamera(prev => ({ ...prev, zoom: Math.min(prev.zoom * 1.2, 5) }))}>
+            <button type="button" className="toolbar-btn" onClick={() => setCamera((prev) => ({ ...prev, zoom: Math.min(prev.zoom * 1.2, 5) }))}>
               <ZoomIn size={18} />
             </button>
-            <button className="toolbar-btn" onClick={() => setCamera(prev => ({ ...prev, zoom: Math.max(prev.zoom / 1.2, 0.1) }))}>
+            <button type="button" className="toolbar-btn" onClick={() => setCamera((prev) => ({ ...prev, zoom: Math.max(prev.zoom / 1.2, 0.1) }))}>
               <ZoomOut size={18} />
             </button>
             <span style={{ fontSize: '12px', color: 'var(--text-secondary)', minWidth: 40, textAlign: 'center' }}>
@@ -665,6 +979,12 @@ const App = () => {
             </span>
           </div>
         </header>
+
+        {readOnlyCanvas && (
+          <div className="read-only-banner">
+            View only — you can pan and zoom. Switch to &quot;Yours&quot; to edit your list.
+          </div>
+        )}
 
         <div
           className="canvas-container"
@@ -677,9 +997,9 @@ const App = () => {
           onMouseLeave={() => setIsPanning(false)}
           style={{
             cursor: isPanning ? 'grabbing' : 'grab',
-            backgroundImage: `radial-gradient(var(--notebook-dot) 1px, transparent 1px)`,
+            backgroundImage: 'radial-gradient(var(--notebook-dot) 1px, transparent 1px)',
             backgroundPosition: `${-camera.x * camera.zoom}px ${-camera.y * camera.zoom}px`,
-            backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`
+            backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`,
           }}
         >
           <div className="canvas-notebook-paper" aria-hidden />
@@ -692,17 +1012,17 @@ const App = () => {
               height: '100%',
               pointerEvents: 'none',
               transformOrigin: '0 0',
-              zIndex: 1
+              zIndex: 1,
             }}
             animate={{
               x: -camera.x * camera.zoom,
               y: -camera.y * camera.zoom,
-              scale: camera.zoom
+              scale: camera.zoom,
             }}
             transition={{ duration: 0 }}
           >
             <AnimatePresence>
-              {todos.map(todo => (
+              {todos.map((todo) => (
                 <TodoItem
                   key={todo.id}
                   todo={todo}
@@ -715,7 +1035,7 @@ const App = () => {
                   cameraRef={cameraRef}
                   onUpdateDueDate={updateDueDate}
                   onUpdateRepeat={updateRepeat}
-                  classification={classifications.get(todo.id)}
+                  readOnly={readOnlyCanvas}
                 />
               ))}
             </AnimatePresence>
