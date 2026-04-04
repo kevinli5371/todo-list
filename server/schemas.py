@@ -6,13 +6,19 @@ from pydantic import BaseModel, Field
 class PartnerInfo(BaseModel):
     id: str
     email: str
+    username: Optional[str] = None
 
 
 class MeResponse(BaseModel):
     id: str
     email: str
+    username: Optional[str] = None
     invite_code: str
     partner: Optional[PartnerInfo] = None
+
+
+class UpdateMeRequest(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=1, max_length=32)
 
 
 class PairRequest(BaseModel):

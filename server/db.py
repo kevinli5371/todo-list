@@ -73,6 +73,7 @@ class Profile(Base):
 
     id = Column(String(36), primary_key=True)
     email = Column(String(320), index=True, nullable=False, default="")
+    username = Column(String(64), unique=True, nullable=True)
     invite_code = Column(String(32), unique=True, index=True, nullable=False)
     partner_id = Column(String(36), ForeignKey("profiles.id"), nullable=True)
 

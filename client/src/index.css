@@ -776,6 +776,43 @@ body {
   margin-bottom: 10px;
 }
 
+.sidebar-account-identity {
+  margin-bottom: 10px;
+}
+
+.sidebar-account-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-account-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.sidebar-icon-btn--muted {
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.sidebar-icon-btn--muted:hover {
+  opacity: 0.85;
+}
+
+.sidebar-username-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar-username-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .sidebar-paired {
   font-size: 12px;
   font-weight: 600;

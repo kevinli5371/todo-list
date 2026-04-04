@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth_utils import decode_supabase_jwt
 from db import Profile, Todo, gen_invite_code, get_db, init_db
-from schemas import MeResponse, PairRequest, PartnerInfo, TodoCreate, TodoOut, TodoPatch
+from schemas import MeResponse, PairRequest, PartnerInfo, TodoCreate, TodoOut, TodoPatch, UpdateMeRequest
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -107,10 +107,38 @@ def me(user: Profile = Depends(get_current_profile), db: Session = Depends(get_d
     if user.partner_id:
         p = db.query(Profile).filter(Profile.id == user.partner_id).first()
         if p:
-            partner = PartnerInfo(id=p.id, email=p.email)
+            partner = PartnerInfo(id=p.id, email=p.email, username=p.username)
     return MeResponse(
         id=user.id,
         email=user.email,
+        username=user.username,
+        invite_code=user.invite_code,
+        partner=partner,
+    )
+
+
+@app.patch("/api/me", response_model=MeResponse)
+def update_me(body: UpdateMeRequest, user: Profile = Depends(get_current_profile), db: Session = Depends(get_db)):
+    if body.username is not None:
+        new_username = body.username.strip()
+        if not new_username:
+            raise HTTPException(status_code=400, detail="Username cannot be empty")
+        existing = db.query(Profile).filter(Profile.username == new_username, Profile.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Username already taken")
+        user.username = new_username
+        db.commit()
+        db.refresh(user)
+
+    partner = None
+    if user.partner_id:
+        p = db.query(Profile).filter(Profile.id == user.partner_id).first()
+        if p:
+            partner = PartnerInfo(id=p.id, email=p.email, username=p.username)
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
         invite_code=user.invite_code,
         partner=partner,
     )
@@ -134,10 +162,11 @@ def pair(body: PairRequest, user: Profile = Depends(get_current_profile), db: Se
     db.refresh(user)
 
     p = db.query(Profile).filter(Profile.id == user.partner_id).first()
-    partner = PartnerInfo(id=p.id, email=p.email) if p else None
+    partner = PartnerInfo(id=p.id, email=p.email, username=p.username) if p else None
     return MeResponse(
         id=user.id,
         email=user.email,
+        username=user.username,
         invite_code=user.invite_code,
         partner=partner,
     )

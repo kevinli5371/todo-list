@@ -3,6 +3,7 @@ import { Check, Trash2, ZoomIn, ZoomOut, Edit, PanelLeft, Calendar, RefreshCw, U
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   fetchMe,
+  updateMe,
   pairWithCode,
   fetchTodos,
   createTodoRemote,
@@ -545,6 +546,10 @@ const App = () => {
   const [listScope, setListScope] = useState('both');
   const [pairInput, setPairInput] = useState('');
   const [pairErr, setPairErr] = useState('');
+  const [usernameEditing, setUsernameEditing] = useState(false);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameErr, setUsernameErr] = useState('');
+  const [usernameSaving, setUsernameSaving] = useState(false);
 
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
@@ -927,7 +932,8 @@ const App = () => {
   }
 
   const partnerEmail = me.partner?.email ?? '';
-  const partnerShort = partnerEmail ? partnerEmail.split('@')[0] : '';
+  const partnerShort = me.partner?.username || (partnerEmail ? partnerEmail.split('@')[0] : '');
+  const myDisplayName = me.username || me.email.split('@')[0];
 
   return (
     <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
@@ -989,9 +995,62 @@ const App = () => {
           )}
         </div>
         <div className="sidebar-account">
-          <div className="sidebar-account-email">{me.email}</div>
+          <div className="sidebar-account-identity">
+            {usernameEditing ? (
+              <form
+                className="sidebar-username-form"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const val = usernameInput.trim();
+                  if (!val) return;
+                  setUsernameSaving(true);
+                  setUsernameErr('');
+                  try {
+                    const updated = await updateMe({ username: val });
+                    setMe(updated);
+                    setUsernameEditing(false);
+                  } catch (err) {
+                    setUsernameErr(err.message || 'Failed to save');
+                  } finally {
+                    setUsernameSaving(false);
+                  }
+                }}
+              >
+                <input
+                  className="auth-input auth-input--compact"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  placeholder="Enter username"
+                  autoFocus
+                  maxLength={32}
+                  disabled={usernameSaving}
+                />
+                <div className="sidebar-username-actions">
+                  <button type="submit" className="auth-submit auth-submit--small" disabled={usernameSaving || !usernameInput.trim()}>
+                    {usernameSaving ? '…' : 'Save'}
+                  </button>
+                  <button type="button" className="sidebar-icon-btn" onClick={() => { setUsernameEditing(false); setUsernameErr(''); }}>
+                    Cancel
+                  </button>
+                </div>
+                {usernameErr && <div className="auth-error auth-error--compact">{usernameErr}</div>}
+              </form>
+            ) : (
+              <div className="sidebar-account-name-row">
+                <span className="sidebar-account-name">{myDisplayName}</span>
+                <button
+                  type="button"
+                  className="sidebar-icon-btn sidebar-icon-btn--muted"
+                  title="Edit username"
+                  onClick={() => { setUsernameInput(me.username || ''); setUsernameEditing(true); setUsernameErr(''); }}
+                >
+                  <Edit size={13} />
+                </button>
+              </div>
+            )}
+          </div>
           {me.partner ? (
-            <div className="sidebar-paired">Paired with {me.partner.email}</div>
+            <div className="sidebar-paired">Paired with {partnerShort || partnerEmail}</div>
           ) : (
             <>
               <div className="sidebar-invite-label">Your invite code</div>

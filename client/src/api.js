@@ -62,6 +62,10 @@ export function fetchMe() {
   return request('/api/me');
 }
 
+export function updateMe(patch) {
+  return request('/api/me', { method: 'PATCH', body: patch });
+}
+
 export function pairWithCode(inviteCode) {
   return request('/api/pair', {
     method: 'POST',
