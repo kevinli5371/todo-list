@@ -21,6 +21,7 @@ class PairRequest(BaseModel):
 
 class TodoOut(BaseModel):
     id: str
+    owner_id: str
     text: str
     x: float
     y: float

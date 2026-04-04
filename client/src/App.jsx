@@ -157,14 +157,14 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
   );
 };
 
-const SidebarItem = ({ todo, active, onClick, onDelete, readOnly }) => {
+const SidebarItem = ({ todo, active, onClick, onDelete, readOnly, isPartner }) => {
   const title = todo.text.split('\n')[0] || 'New Item';
   const rest = todo.text.split('\n').slice(1).join(' ') || 'No additional text';
   const date = new Date(todo.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
   return (
     <div
-      className={`sidebar-item ${active ? 'active' : ''}`}
+      className={`sidebar-item ${active ? 'active' : ''} ${isPartner ? 'sidebar-item--partner' : ''}`}
       onClick={() => onClick(todo)}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -209,6 +209,7 @@ const TodoItem = ({
   onUpdateDueDate,
   onUpdateRepeat,
   readOnly,
+  isPartner,
 }) => {
   const inputRef = useRef(null);
   const itemRef = useRef(null);
@@ -340,7 +341,7 @@ const TodoItem = ({
       }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={snappyTransition}
-      className={`todo-item-canvas ${isExpanded ? 'is-expanded' : ''} ${readOnly ? 'todo-readonly' : ''}`}
+      className={`todo-item-canvas ${isExpanded ? 'is-expanded' : ''} ${readOnly ? 'todo-readonly' : ''} ${isPartner ? 'todo-partner' : ''}`}
       style={{
         position: 'absolute',
         left: todo.x,
@@ -541,7 +542,7 @@ const App = () => {
   const [me, setMe] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [todos, setTodos] = useState([]);
-  const [listScope, setListScope] = useState('mine');
+  const [listScope, setListScope] = useState('both');
   const [pairInput, setPairInput] = useState('');
   const [pairErr, setPairErr] = useState('');
 
@@ -640,7 +641,7 @@ const App = () => {
   }, [camera, cameraStorageKey]);
 
   useEffect(() => {
-    if (me && !me.partner && listScope === 'partner') {
+    if (me && !me.partner && listScope !== 'mine') {
       setListScope('mine');
     }
   }, [me, listScope]);
@@ -651,6 +652,8 @@ const App = () => {
 
   const effectiveScope = me?.partner ? listScope : 'mine';
   const readOnlyCanvas = effectiveScope === 'partner';
+  const todoReadOnly = (todo) =>
+    effectiveScope === 'partner' || (effectiveScope === 'both' && todo.owner_id !== me?.id);
 
   useEffect(() => {
     if (!me) return;
@@ -658,7 +661,13 @@ const App = () => {
     (async () => {
       try {
         const data = await fetchTodos(effectiveScope);
-        if (!cancelled) setTodos(data);
+        if (!cancelled) setTodos((prev) => data.map((t) => {
+          if (textTimers.current[t.id]) {
+            const current = prev.find((p) => p.id === t.id);
+            return current ? { ...t, text: current.text } : t;
+          }
+          return t;
+        }));
       } catch (e) {
         console.error(e);
       }
@@ -668,24 +677,48 @@ const App = () => {
 
   useEffect(() => {
     if (!me) return;
-    const ownerId = effectiveScope === 'partner' ? me.partner?.id : me.id;
-    if (!ownerId) return;
 
-    const channel = supabase
-      .channel(`todos:owner:${ownerId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${ownerId}` },
-        () => {
-          fetchTodos(effectiveScope)
-            .then((data) => setTodos(data.filter((t) => !deletingIdsRef.current.has(t.id))))
-            .catch(() => {});
-        }
-      )
-      .subscribe();
+    const callback = () => {
+      fetchTodos(effectiveScope)
+        .then((data) => setTodos((prev) => {
+          return data
+            .filter((t) => !deletingIdsRef.current.has(t.id))
+            .map((t) => {
+              // Don't overwrite text while user is actively typing in this todo
+              if (textTimers.current[t.id]) {
+                const current = prev.find((p) => p.id === t.id);
+                return current ? { ...t, text: current.text } : t;
+              }
+              return t;
+            });
+        }))
+        .catch(() => {});
+    };
+
+    const channels = [];
+    if (effectiveScope === 'both' && me.partner) {
+      channels.push(
+        supabase.channel(`todos:mine:${me.id}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${me.id}` }, callback)
+          .subscribe()
+      );
+      channels.push(
+        supabase.channel(`todos:partner:${me.partner.id}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${me.partner.id}` }, callback)
+          .subscribe()
+      );
+    } else {
+      const ownerId = effectiveScope === 'partner' ? me.partner?.id : me.id;
+      if (!ownerId) return;
+      channels.push(
+        supabase.channel(`todos:owner:${ownerId}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${ownerId}` }, callback)
+          .subscribe()
+      );
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((ch) => supabase.removeChannel(ch));
     };
   }, [me, effectiveScope]);
 
@@ -900,19 +933,55 @@ const App = () => {
     <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
       <aside className="sidebar">
         <div className="sidebar-header">
-          {readOnlyCanvas ? `${partnerShort || 'Partner'}'s list` : 'Your list'}
+          {readOnlyCanvas ? `${partnerShort || 'Partner'}'s list` : effectiveScope === 'both' ? 'Both lists' : 'Your list'}
         </div>
         <div className="sidebar-list">
-          {todos.map((todo) => (
-            <SidebarItem
-              key={todo.id}
-              todo={todo}
-              active={todo.id === focusedId}
-              onClick={centerOnTodo}
-              onDelete={deleteTodo}
-              readOnly={readOnlyCanvas}
-            />
-          ))}
+          {effectiveScope === 'both' ? (
+            <>
+              <div className="sidebar-section-label">Yours</div>
+              {todos.filter((t) => t.owner_id === me.id).map((todo) => (
+                <SidebarItem
+                  key={todo.id}
+                  todo={todo}
+                  active={todo.id === focusedId}
+                  onClick={centerOnTodo}
+                  onDelete={deleteTodo}
+                  readOnly={todoReadOnly(todo)}
+                  isPartner={false}
+                />
+              ))}
+              {me.partner && (
+                <>
+                  <div className="sidebar-section-label sidebar-section-label--partner">
+                    {partnerShort || 'Partner'}
+                  </div>
+                  {todos.filter((t) => t.owner_id !== me.id).map((todo) => (
+                    <SidebarItem
+                      key={todo.id}
+                      todo={todo}
+                      active={todo.id === focusedId}
+                      onClick={centerOnTodo}
+                      onDelete={deleteTodo}
+                      readOnly={todoReadOnly(todo)}
+                      isPartner={true}
+                    />
+                  ))}
+                </>
+              )}
+            </>
+          ) : (
+            todos.map((todo) => (
+              <SidebarItem
+                key={todo.id}
+                todo={todo}
+                active={todo.id === focusedId}
+                onClick={centerOnTodo}
+                onDelete={deleteTodo}
+                readOnly={todoReadOnly(todo)}
+                isPartner={me && todo.owner_id !== me.id}
+              />
+            ))
+          )}
           {todos.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
               {readOnlyCanvas ? 'No items yet' : 'No notes yet'}
@@ -966,6 +1035,13 @@ const App = () => {
           </button>
           {me.partner && (
             <div className="toolbar-list-toggle" role="group" aria-label="Whose list to view">
+              <button
+                type="button"
+                className={`toolbar-seg ${effectiveScope === 'both' ? 'active' : ''}`}
+                onClick={() => { setListScope('both'); setFocusedId(null); }}
+              >
+                Both
+              </button>
               <button
                 type="button"
                 className={`toolbar-seg ${effectiveScope === 'mine' ? 'active' : ''}`}
@@ -1063,7 +1139,8 @@ const App = () => {
                   cameraRef={cameraRef}
                   onUpdateDueDate={updateDueDate}
                   onUpdateRepeat={updateRepeat}
-                  readOnly={readOnlyCanvas}
+                  readOnly={todoReadOnly(todo)}
+                  isPartner={me && todo.owner_id !== me.id}
                 />
               ))}
             </AnimatePresence>

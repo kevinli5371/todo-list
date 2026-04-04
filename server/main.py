@@ -85,6 +85,7 @@ def get_current_profile(
 def todo_to_out(row: Todo) -> TodoOut:
     return TodoOut(
         id=row.id,
+        owner_id=row.owner_id,
         text=row.text or "",
         x=row.x,
         y=row.y,
@@ -148,17 +149,27 @@ def list_todos(
     user: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ):
-    if scope not in ("mine", "partner"):
-        raise HTTPException(status_code=400, detail="scope must be mine or partner")
+    if scope not in ("mine", "partner", "both"):
+        raise HTTPException(status_code=400, detail="scope must be mine, partner, or both")
 
-    if scope == "mine":
+    if scope == "both":
+        if user.partner_id:
+            rows = (
+                db.query(Todo)
+                .filter(Todo.owner_id.in_([user.id, user.partner_id]))
+                .order_by(Todo.timestamp.desc())
+                .all()
+            )
+        else:
+            rows = db.query(Todo).filter(Todo.owner_id == user.id).order_by(Todo.timestamp.desc()).all()
+    elif scope == "mine":
         owner_id = user.id
+        rows = db.query(Todo).filter(Todo.owner_id == owner_id).order_by(Todo.timestamp.desc()).all()
     else:
         if not user.partner_id:
             raise HTTPException(status_code=400, detail="No partner linked")
         owner_id = user.partner_id
-
-    rows = db.query(Todo).filter(Todo.owner_id == owner_id).order_by(Todo.timestamp.desc()).all()
+        rows = db.query(Todo).filter(Todo.owner_id == owner_id).order_by(Todo.timestamp.desc()).all()
     return [todo_to_out(t) for t in rows]
 
 
