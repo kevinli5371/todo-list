@@ -40,8 +40,10 @@ def decode_supabase_jwt(token: str) -> dict | None:
             algorithms=[alg, "ES256", "RS256", "HS256"],
             audience="authenticated",
         )
-    except JWTError:
+    except JWTError as e:
+        print(f"[auth] JWTError: {e}", flush=True)
         return None
-    except Exception:
+    except Exception as e:
+        print(f"[auth] Unexpected: {e}", flush=True)
         _get_jwks.cache_clear()
         return None

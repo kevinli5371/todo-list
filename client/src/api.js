@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = 'http://localhost:8000';
 
 /** Avoid infinite "Loading…" when the API is down or the server hangs on DB connect */
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -39,7 +39,7 @@ async function request(path, options = {}) {
     clear();
   }
   if (res.status === 401) {
-    await supabase.auth.signOut();
+    supabase.auth.signOut({ scope: 'local' });
     throw new Error('UNAUTHORIZED');
   }
   const text = await res.text();

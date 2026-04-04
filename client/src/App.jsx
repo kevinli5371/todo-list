@@ -555,53 +555,49 @@ const App = () => {
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const dragStartPos = useRef({ x: 0, y: 0 });
+  const isCreatingRef = useRef(false);
+  const deletingIdsRef = useRef(new Set());
 
   const cameraStorageKey = me ? `spatial-camera-${me.id}` : null;
 
   useEffect(() => {
     let cancelled = false;
+    let initDone = false;
     let subscription = { unsubscribe() {} };
 
-    const AUTH_INIT_TIMEOUT = 8_000;
+    const markReady = (profile) => {
+      if (initDone || cancelled) return;
+      initDone = true;
+      setMe(profile ?? null);
+      setAuthReady(true);
+    };
 
-    const sessionPromise = supabase.auth.getSession().then(r => r.data.session);
-    const timeoutPromise = new Promise(resolve =>
-      setTimeout(() => resolve(null), AUTH_INIT_TIMEOUT)
-    );
+    const fallback = setTimeout(() => markReady(null), 3000);
 
-    (async () => {
-      let session = null;
-      try {
-        session = await Promise.race([sessionPromise, timeoutPromise]);
-        if (cancelled) return;
-      } catch (e) {
-        console.warn('getSession failed:', e?.message || e);
-        if (!cancelled) {
-          setMe(null);
-          setAuthReady(true);
+    // Fast path: read session from localStorage (no network when no session)
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      clearTimeout(fallback);
+      if (cancelled) return;
+      if (session?.access_token) {
+        try {
+          const profile = await fetchMe();
+          markReady(profile);
+        } catch (e) {
+          console.warn('fetchMe failed on init:', e?.message || e);
+          markReady(null);
         }
-        return;
+      } else {
+        markReady(null);
       }
+    }).catch(() => {
+      clearTimeout(fallback);
+      markReady(null);
+    });
 
-      if (!session?.access_token) {
-        if (!cancelled) { setMe(null); setAuthReady(true); }
-        return;
-      }
-
-      try {
-        const profile = await fetchMe();
-        if (!cancelled) setMe(profile);
-      } catch (e) {
-        console.warn('Could not load profile (API off, timeout, or bad token):', e?.message || e);
-        if (!cancelled) setMe(null);
-      } finally {
-        if (!cancelled) setAuthReady(true);
-      }
-    })();
-
+    // Handle subsequent sign-in / sign-out events
     try {
       const { data } = supabase.auth.onAuthStateChange(async (_event, session) => {
-        if (cancelled) return;
+        if (cancelled || !initDone) return;
         if (session?.access_token) {
           try {
             const profile = await fetchMe();
@@ -610,7 +606,7 @@ const App = () => {
             if (!cancelled) setMe(null);
           }
         } else {
-          setMe(null);
+          if (!cancelled) setMe(null);
         }
       });
       subscription = data.subscription;
@@ -620,6 +616,7 @@ const App = () => {
 
     return () => {
       cancelled = true;
+      clearTimeout(fallback);
       subscription.unsubscribe();
     };
   }, []);
@@ -680,7 +677,9 @@ const App = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'todos', filter: `owner_id=eq.${ownerId}` },
         () => {
-          fetchTodos(effectiveScope).then(setTodos).catch(() => {});
+          fetchTodos(effectiveScope)
+            .then((data) => setTodos(data.filter((t) => !deletingIdsRef.current.has(t.id))))
+            .catch(() => {});
         }
       )
       .subscribe();
@@ -691,7 +690,8 @@ const App = () => {
   }, [me, effectiveScope]);
 
   const createNote = useCallback(async (x, y, initialText = '') => {
-    if (!me || readOnlyCanvas) return;
+    if (!me || readOnlyCanvas || isCreatingRef.current) return;
+    isCreatingRef.current = true;
     const sidebarWidth = showSidebar ? 280 : 0;
     const worldX = x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120);
     const worldY = y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20);
@@ -708,6 +708,8 @@ const App = () => {
       setFocusedId(created.id);
     } catch (e) {
       console.error(e);
+    } finally {
+      isCreatingRef.current = false;
     }
   }, [me, readOnlyCanvas, camera, showSidebar]);
 
@@ -768,16 +770,20 @@ const App = () => {
   };
 
   const deleteTodo = async (id) => {
+    deletingIdsRef.current.add(id);
     setTodos((prev) => prev.filter((t) => t.id !== id));
     try {
       await deleteTodoRemote(id);
     } catch (e) {
       console.error(e);
+      deletingIdsRef.current.delete(id);
       try {
         const data = await fetchTodos(effectiveScope);
-        setTodos(data);
+        setTodos(data.filter((t) => !deletingIdsRef.current.has(t.id)));
       } catch (_) { /* ignore */ }
+      return;
     }
+    deletingIdsRef.current.delete(id);
   };
 
   const handlePair = async (e) => {
