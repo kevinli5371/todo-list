@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { Check, Trash2, ZoomIn, ZoomOut, Edit, PanelLeft, Calendar, RefreshCw, Users, LogOut, Copy } from 'lucide-react';
+import { Check, Trash2, ZoomIn, ZoomOut, Edit, PanelLeft, Calendar, RefreshCw, Users, LogOut, Copy, Plus, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   fetchMe,
@@ -9,14 +9,21 @@ import {
   createTodoRemote,
   patchTodoRemote,
   deleteTodoRemote,
+  isOnline,
+  flushOfflineQueue,
 } from './api';
 import { supabase, isSupabaseConfigured } from './supabaseClient';
+
+// ── Helpers ────────────────────────────────────────────────
 
 const TEXTAREA_FIELD_SIZING =
   typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
 
 const REPEAT_OPTIONS = [null, 'daily', 'weekly', 'monthly', 'yearly'];
 const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+
+const IS_TOUCH_DEVICE = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+const IS_MOBILE = typeof window !== 'undefined' && window.innerWidth <= 768;
 
 const formatDueDate = (iso) => {
   const d = new Date(iso);
@@ -32,6 +39,74 @@ const formatDueDate = (iso) => {
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+// ── Service Worker Registration ────────────────────────────
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+// ── Toast System ───────────────────────────────────────────
+
+let _toastId = 0;
+const _toastListeners = new Set();
+let _toasts = [];
+
+function addToast(message, options = {}) {
+  const id = ++_toastId;
+  const toast = { id, message, ...options };
+  _toasts = [..._toasts, toast];
+  _toastListeners.forEach((fn) => fn(_toasts));
+  if (!options.persist) {
+    setTimeout(() => removeToast(id), options.duration || 4000);
+  }
+  return id;
+}
+
+function removeToast(id) {
+  _toasts = _toasts.filter((t) => t.id !== id);
+  _toastListeners.forEach((fn) => fn(_toasts));
+}
+
+function useToasts() {
+  const [toasts, setToasts] = useState(_toasts);
+  useEffect(() => {
+    _toastListeners.add(setToasts);
+    return () => _toastListeners.delete(setToasts);
+  }, []);
+  return toasts;
+}
+
+const ToastContainer = () => {
+  const toasts = useToasts();
+  return (
+    <div className="toast-container">
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            className="toast"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+          >
+            <span>{t.message}</span>
+            {t.onUndo && (
+              <button className="toast-undo" onClick={() => { t.onUndo(); removeToast(t.id); }}>
+                Undo
+              </button>
+            )}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// ── DatePickerPopup ────────────────────────────────────────
 
 const DatePickerPopup = ({ value, onChange, onClear }) => {
   const init = value ? new Date(value) : new Date();
@@ -78,8 +153,10 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
   const ampm = timeH >= 12 ? 'PM' : 'AM';
   const displayH = timeH % 12 === 0 ? 12 : timeH % 12;
 
+  const stopTouch = (e) => e.stopPropagation();
+
   return (
-    <div className="dp-popup" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="dp-popup" onMouseDown={(e) => e.stopPropagation()} onTouchStart={stopTouch}>
       <div className="dp-header">
         <button className="dp-nav" onClick={prevMonth}>‹</button>
         <span className="dp-month-year">{MONTH_NAMES[viewMonth]} {viewYear}</span>
@@ -119,6 +196,7 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
               applyTime(h24, timeM);
             }}
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={stopTouch}
           />
           <span className="dp-time-sep">:</span>
           <input
@@ -132,6 +210,7 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
               applyTime(timeH, m);
             }}
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={stopTouch}
           />
           <button
             className="dp-ampm"
@@ -157,6 +236,8 @@ const DatePickerPopup = ({ value, onChange, onClear }) => {
     </div>
   );
 };
+
+// ── SidebarItem ────────────────────────────────────────────
 
 const SidebarItem = ({ todo, active, onClick, onDelete, readOnly, isPartner }) => {
   const title = todo.text.split('\n')[0] || 'New Item';
@@ -192,12 +273,11 @@ const SidebarItem = ({ todo, active, onClick, onDelete, readOnly, isPartner }) =
   );
 };
 
-const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
+// ── TodoItem ───────────────────────────────────────────────
 
-/** Checkbox + gaps + delete + drag handle + horizontal padding — add to text width for card size */
+const snappyTransition = { duration: 0.15, ease: [0.4, 0, 1, 1] };
 const TODO_CARD_CHROME_W = 132;
 
-// Helper Component for Individual Todo Items to handle focus and drag
 const TodoItem = ({
   todo,
   isFocused,
@@ -234,8 +314,6 @@ const TodoItem = ({
     }
   }, [isFocused, readOnly]);
 
-  // Clear inline height when expanded so CSS field-sizing: content controls size (no flicker).
-  // Legacy browsers: set height once on expand only.
   useLayoutEffect(() => {
     const ta = inputRef.current;
     if (!ta) return;
@@ -255,7 +333,6 @@ const TodoItem = ({
     }
   }, [isExpanded]);
 
-  // Widen card with long titles (first line when collapsed; max line when expanded)
   useLayoutEffect(() => {
     const ta = inputRef.current;
     const box = itemRef.current;
@@ -284,6 +361,7 @@ const TodoItem = ({
     return () => window.removeEventListener('resize', measure);
   }, [todo.text, isExpanded]);
 
+  // ── Drag (mouse) ──
   const handleDragHandleMouseDown = (e) => {
     if (readOnly) return;
     e.preventDefault();
@@ -294,20 +372,15 @@ const TodoItem = ({
     const startClientY = e.clientY;
     const startTodoX = todo.x;
     const startTodoY = todo.y;
-    // Capture zoom at drag start — doesn't change during drag
     const zoom = cameraRef.current.zoom;
 
-    if (itemRef.current) {
-      itemRef.current.style.zIndex = '100';
-    }
+    if (itemRef.current) itemRef.current.style.zIndex = '100';
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'grabbing';
 
     const onMove = (moveEvent) => {
-      // Convert screen-space delta to world-space by dividing by zoom
       const dx = (moveEvent.clientX - startClientX) / zoom;
       const dy = (moveEvent.clientY - startClientY) / zoom;
-      // Update DOM directly — no React re-render, zero lag
       if (itemRef.current) {
         itemRef.current.style.left = `${startTodoX + dx}px`;
         itemRef.current.style.top = `${startTodoY + dy}px`;
@@ -317,12 +390,9 @@ const TodoItem = ({
     const onUp = (upEvent) => {
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
-      if (itemRef.current) {
-        itemRef.current.style.zIndex = '';
-      }
+      if (itemRef.current) itemRef.current.style.zIndex = '';
       const dx = (upEvent.clientX - startClientX) / zoom;
       const dy = (upEvent.clientY - startClientY) / zoom;
-      // Sync final position to React state — matches DOM exactly, no visual snap
       onPositionChange(todo.id, startTodoX + dx, startTodoY + dy);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
@@ -330,6 +400,46 @@ const TodoItem = ({
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  };
+
+  // ── Drag (touch) ──
+  const handleDragHandleTouchStart = (e) => {
+    if (readOnly) return;
+    e.stopPropagation();
+    const touch = e.touches[0];
+    onFocus(todo.id);
+
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const startTodoX = todo.x;
+    const startTodoY = todo.y;
+    const zoom = cameraRef.current.zoom;
+
+    if (itemRef.current) itemRef.current.style.zIndex = '100';
+
+    const onMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      const t = moveEvent.touches[0];
+      const dx = (t.clientX - startX) / zoom;
+      const dy = (t.clientY - startY) / zoom;
+      if (itemRef.current) {
+        itemRef.current.style.left = `${startTodoX + dx}px`;
+        itemRef.current.style.top = `${startTodoY + dy}px`;
+      }
+    };
+
+    const onEnd = (endEvent) => {
+      if (itemRef.current) itemRef.current.style.zIndex = '';
+      const t = endEvent.changedTouches[0];
+      const dx = (t.clientX - startX) / zoom;
+      const dy = (t.clientY - startY) / zoom;
+      onPositionChange(todo.id, startTodoX + dx, startTodoY + dy);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+    };
+
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
   };
 
   return (
@@ -354,6 +464,10 @@ const TodoItem = ({
         e.stopPropagation();
         if (!readOnly) onFocus(todo.id);
       }}
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        if (!readOnly) onFocus(todo.id);
+      }}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <div
@@ -374,6 +488,7 @@ const TodoItem = ({
             value={todo.text}
             onChange={(e) => onUpdate(todo.id, e.target.value)}
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
             placeholder="New Item"
             rows={1}
             style={{ resize: 'none', overflow: 'hidden', cursor: readOnly ? 'default' : 'text' }}
@@ -401,6 +516,7 @@ const TodoItem = ({
           <div
             className="drag-handle"
             onMouseDown={handleDragHandleMouseDown}
+            onTouchStart={handleDragHandleTouchStart}
           >
             {[0, 1, 2].map(row => (
               [0, 1].map(col => (
@@ -419,7 +535,6 @@ const TodoItem = ({
         </div>
       )}
 
-      {/* Single wrapper so footer + calendar collapse in one smooth motion */}
       {!readOnly && (
       <div
         className={`todo-footer-wrapper ${(todo.dueDate || todo.repeat || showDatePicker || isFocused) ? 'is-open' : ''}`}
@@ -462,6 +577,8 @@ const TodoItem = ({
     </motion.div>
   );
 };
+
+// ── AuthScreen ─────────────────────────────────────────────
 
 const AuthScreen = () => {
   const [mode, setMode] = useState('login');
@@ -539,6 +656,8 @@ const AuthScreen = () => {
   );
 };
 
+// ── Main App ───────────────────────────────────────────────
+
 const App = () => {
   const [me, setMe] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -554,7 +673,7 @@ const App = () => {
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef(camera);
   const [focusedId, setFocusedId] = useState(null);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(!IS_MOBILE);
   const canvasRef = useRef(null);
   const textTimers = useRef({});
 
@@ -564,8 +683,40 @@ const App = () => {
   const isCreatingRef = useRef(false);
   const deletingIdsRef = useRef(new Set());
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Undo delete stack
+  const undoStackRef = useRef([]);
+
+  // Touch state for canvas
+  const touchStateRef = useRef({ type: null, startTouches: null, startCamera: null });
+
+  // Online/offline state
+  const [online, setOnline] = useState(isOnline());
+
   const cameraStorageKey = me ? `spatial-camera-${me.id}` : null;
 
+  // ── Online/offline handling ──
+  useEffect(() => {
+    const goOnline = () => {
+      setOnline(true);
+      addToast('Back online');
+      flushOfflineQueue().catch(() => {});
+    };
+    const goOffline = () => {
+      setOnline(false);
+      addToast('You are offline — changes will sync when reconnected');
+    };
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  // ── Auth init ──
   useEffect(() => {
     let cancelled = false;
     let initDone = false;
@@ -580,7 +731,6 @@ const App = () => {
 
     const fallback = setTimeout(() => markReady(null), 3000);
 
-    // Fast path: read session from localStorage (no network when no session)
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       clearTimeout(fallback);
       if (cancelled) return;
@@ -600,7 +750,6 @@ const App = () => {
       markReady(null);
     });
 
-    // Handle subsequent sign-in / sign-out events
     try {
       const { data } = supabase.auth.onAuthStateChange(async (_event, session) => {
         if (cancelled || !initDone) return;
@@ -627,6 +776,7 @@ const App = () => {
     };
   }, []);
 
+  // ── Camera persistence ──
   useEffect(() => {
     if (!cameraStorageKey) return;
     try {
@@ -660,6 +810,7 @@ const App = () => {
   const todoReadOnly = (todo) =>
     effectiveScope === 'partner' || (effectiveScope === 'both' && todo.owner_id !== me?.id);
 
+  // ── Fetch todos ──
   useEffect(() => {
     if (!me) return;
     let cancelled = false;
@@ -680,16 +831,27 @@ const App = () => {
     return () => { cancelled = true; };
   }, [me, effectiveScope]);
 
+  // ── Realtime subscriptions ──
   useEffect(() => {
     if (!me) return;
 
-    const callback = () => {
+    const callback = (payload) => {
+      // Partner change notifications
+      if (payload?.new?.owner_id && payload.new.owner_id !== me.id && me.partner) {
+        const event = payload.eventType;
+        if (event === 'INSERT') {
+          addToast(`${me.partner.username || me.partner.email.split('@')[0]} added a new item`);
+        } else if (event === 'UPDATE' && payload.old?.completed !== payload.new?.completed && payload.new.completed) {
+          const text = (payload.new.text || '').split('\n')[0] || 'an item';
+          addToast(`${me.partner.username || me.partner.email.split('@')[0]} completed "${text.slice(0, 30)}"`);
+        }
+      }
+
       fetchTodos(effectiveScope)
         .then((data) => setTodos((prev) => {
           return data
             .filter((t) => !deletingIdsRef.current.has(t.id))
             .map((t) => {
-              // Don't overwrite text while user is actively typing in this todo
               if (textTimers.current[t.id]) {
                 const current = prev.find((p) => p.id === t.id);
                 return current ? { ...t, text: current.text } : t;
@@ -727,10 +889,11 @@ const App = () => {
     };
   }, [me, effectiveScope]);
 
+  // ── Create note ──
   const createNote = useCallback(async (x, y, initialText = '') => {
     if (!me || readOnlyCanvas || isCreatingRef.current) return;
     isCreatingRef.current = true;
-    const sidebarWidth = showSidebar ? 280 : 0;
+    const sidebarWidth = showSidebar && !IS_MOBILE ? 280 : 0;
     const worldX = x ?? (camera.x + ((window.innerWidth - sidebarWidth) / 2) / camera.zoom - 120);
     const worldY = y ?? (camera.y + (window.innerHeight / 2) / camera.zoom - 20);
     const payload = {
@@ -746,25 +909,63 @@ const App = () => {
       setFocusedId(created.id);
     } catch (e) {
       console.error(e);
+      addToast('Failed to create item');
     } finally {
       isCreatingRef.current = false;
     }
   }, [me, readOnlyCanvas, camera, showSidebar]);
 
+  // ── Keyboard shortcuts ──
   useEffect(() => {
-    if (!me || readOnlyCanvas) return;
+    if (!me) return;
     const handleGlobalKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key.length === 1) {
+
+      // Cmd/Ctrl+Z → undo last delete
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault();
+        const last = undoStackRef.current.pop();
+        if (last) last.restore();
+        return;
+      }
+
+      // Escape → unfocus / close sidebar on mobile
+      if (e.key === 'Escape') {
+        if (focusedId) {
+          setFocusedId(null);
+        } else if (IS_MOBILE && showSidebar) {
+          setShowSidebar(false);
+        }
+        return;
+      }
+
+      // N → new item
+      if (e.key === 'n' || e.key === 'N') {
+        if (!readOnlyCanvas && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          createNote();
+          return;
+        }
+      }
+
+      // Delete/Backspace → delete focused item
+      if ((e.key === 'Delete' || e.key === 'Backspace') && focusedId && !readOnlyCanvas) {
+        e.preventDefault();
+        deleteTodo(focusedId);
+        return;
+      }
+
+      // Any printable key → create note with that character
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !readOnlyCanvas) {
         e.preventDefault();
         createNote(null, null, e.key);
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [me, readOnlyCanvas, createNote]);
+  }, [me, readOnlyCanvas, createNote, focusedId, showSidebar]);
 
+  // ── Todo mutations ──
   const updateTodoPosition = (id, x, y) => {
     setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, x, y } : t)));
     if (!readOnlyCanvas) {
@@ -807,23 +1008,48 @@ const App = () => {
     });
   };
 
+  // ── Delete with undo ──
   const deleteTodo = async (id) => {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo) return;
+
+    // Optimistically remove from UI
     deletingIdsRef.current.add(id);
     setTodos((prev) => prev.filter((t) => t.id !== id));
-    try {
-      await deleteTodoRemote(id);
-    } catch (e) {
-      console.error(e);
-      deletingIdsRef.current.delete(id);
+    if (focusedId === id) setFocusedId(null);
+
+    // Set up undo — delay the actual server delete
+    let undone = false;
+    const deleteTimer = setTimeout(async () => {
+      if (undone) return;
       try {
-        const data = await fetchTodos(effectiveScope);
-        setTodos(data.filter((t) => !deletingIdsRef.current.has(t.id)));
-      } catch (_) { /* ignore */ }
-      return;
-    }
-    deletingIdsRef.current.delete(id);
+        await deleteTodoRemote(id);
+      } catch (e) {
+        console.error(e);
+        // Restore on failure
+        deletingIdsRef.current.delete(id);
+        try {
+          const data = await fetchTodos(effectiveScope);
+          setTodos(data.filter((t) => !deletingIdsRef.current.has(t.id)));
+        } catch (_) { /* ignore */ }
+        return;
+      }
+      deletingIdsRef.current.delete(id);
+    }, 5000);
+
+    const restore = () => {
+      undone = true;
+      clearTimeout(deleteTimer);
+      deletingIdsRef.current.delete(id);
+      setTodos((prev) => [todo, ...prev]);
+    };
+
+    undoStackRef.current.push({ restore });
+
+    addToast('Item deleted', { duration: 5000, onUndo: restore });
   };
 
+  // ── Pairing ──
   const handlePair = async (e) => {
     e.preventDefault();
     setPairErr('');
@@ -831,6 +1057,7 @@ const App = () => {
       const profile = await pairWithCode(pairInput.trim());
       setMe(profile);
       setPairInput('');
+      addToast('Paired successfully!');
     } catch (er) {
       setPairErr(er.message || 'Could not pair');
     }
@@ -845,9 +1072,12 @@ const App = () => {
 
   const copyInvite = () => {
     if (!me?.invite_code) return;
-    navigator.clipboard.writeText(me.invite_code).catch(() => {});
+    navigator.clipboard.writeText(me.invite_code).then(() => {
+      addToast('Invite code copied!');
+    }).catch(() => {});
   };
 
+  // ── Canvas: Mouse events ──
   const handleWheel = (e) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -855,8 +1085,9 @@ const App = () => {
       const factor = Math.pow(1.1, delta / 100);
       const newZoom = Math.min(Math.max(camera.zoom * factor, 0.1), 5);
 
-      const mouseX = e.clientX - (showSidebar ? 280 : 0); // Offset for sidebar
-      const mouseY = e.clientY - 52; // Offset for toolbar
+      const sidebarWidth = showSidebar && !IS_MOBILE ? 280 : 0;
+      const mouseX = e.clientX - sidebarWidth;
+      const mouseY = e.clientY - 52;
 
       setCamera(prev => ({
         zoom: newZoom,
@@ -895,7 +1126,6 @@ const App = () => {
     if (!isPanning) return;
     setIsPanning(false);
     const dist = Math.hypot(e.clientX - dragStartPos.current.x, e.clientY - dragStartPos.current.y);
-    // Single click on canvas → just unfocus the current item
     if (dist < 5) {
       setFocusedId(null);
     }
@@ -909,15 +1139,123 @@ const App = () => {
     createNote(worldX, worldY);
   };
 
+  // ── Canvas: Touch events ──
+  const handleTouchStart = (e) => {
+    // Only handle touches directly on the canvas background
+    if (e.target !== canvasRef.current) return;
+
+    if (e.touches.length === 1) {
+      // Single finger → pan
+      const t = e.touches[0];
+      touchStateRef.current = {
+        type: 'pan',
+        startX: t.clientX,
+        startY: t.clientY,
+        lastX: t.clientX,
+        lastY: t.clientY,
+        startCamera: { ...cameraRef.current },
+        moved: false,
+      };
+    } else if (e.touches.length === 2) {
+      // Two fingers → pinch zoom
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      touchStateRef.current = {
+        type: 'pinch',
+        startDist: dist,
+        startZoom: cameraRef.current.zoom,
+        midX,
+        midY,
+        startCamera: { ...cameraRef.current },
+      };
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    const ts = touchStateRef.current;
+    if (!ts.type) return;
+
+    if (ts.type === 'pan' && e.touches.length === 1) {
+      const t = e.touches[0];
+      const dx = t.clientX - ts.lastX;
+      const dy = t.clientY - ts.lastY;
+      ts.lastX = t.clientX;
+      ts.lastY = t.clientY;
+      ts.moved = true;
+      setCamera(prev => ({
+        ...prev,
+        x: prev.x - dx / prev.zoom,
+        y: prev.y - dy / prev.zoom,
+      }));
+    } else if (ts.type === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const scale = dist / ts.startDist;
+      const newZoom = Math.min(Math.max(ts.startZoom * scale, 0.1), 5);
+
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const midX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const midY = (t1.clientY + t2.clientY) / 2 - rect.top;
+
+      setCamera({
+        zoom: newZoom,
+        x: ts.startCamera.x + (midX / ts.startZoom) - (midX / newZoom),
+        y: ts.startCamera.y + (midY / ts.startZoom) - (midY / newZoom),
+      });
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    const ts = touchStateRef.current;
+    if (ts.type === 'pan' && !ts.moved) {
+      // Tap on canvas → unfocus
+      setFocusedId(null);
+    }
+    if (e.touches.length === 0) {
+      touchStateRef.current = { type: null };
+    }
+  };
+
+  // ── Double-tap detection for mobile ──
+  const lastTapRef = useRef(0);
+  const handleCanvasTap = (e) => {
+    if (e.target !== canvasRef.current || readOnlyCanvas) return;
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      // Double-tap → create note
+      const rect = canvasRef.current.getBoundingClientRect();
+      const touch = e.changedTouches[0];
+      const worldX = cameraRef.current.x + (touch.clientX - rect.left) / cameraRef.current.zoom - 120;
+      const worldY = cameraRef.current.y + (touch.clientY - rect.top) / cameraRef.current.zoom - 20;
+      createNote(worldX, worldY);
+    }
+    lastTapRef.current = now;
+  };
+
   const centerOnTodo = (todo) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
     setCamera({
       x: todo.x - (rect.width / 2) / camera.zoom + 120,
       y: todo.y - (rect.height / 2) / camera.zoom + 40,
       zoom: camera.zoom,
     });
     setFocusedId(todo.id);
+    // Close sidebar on mobile after navigating
+    if (IS_MOBILE) setShowSidebar(false);
   };
+
+  // ── Filter todos by search ──
+  const filteredTodos = searchQuery.trim()
+    ? todos.filter((t) => t.text.toLowerCase().includes(searchQuery.toLowerCase()))
+    : todos;
 
   if (!authReady) {
     return (
@@ -937,15 +1275,33 @@ const App = () => {
 
   return (
     <div className={`app-container ${showSidebar ? '' : 'sidebar-hidden'}`}>
+      {/* Mobile backdrop */}
+      <div className="sidebar-backdrop" onClick={() => setShowSidebar(false)} />
+
       <aside className="sidebar">
         <div className="sidebar-header">
           {readOnlyCanvas ? `${partnerShort || 'Partner'}'s list` : effectiveScope === 'both' ? 'Both lists' : 'Your list'}
         </div>
+
+        {/* Search bar */}
+        <div className="sidebar-search">
+          <div className="sidebar-search-wrap">
+            <Search size={14} className="sidebar-search-icon" />
+            <input
+              className="sidebar-search-input"
+              type="text"
+              placeholder="Search items…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
+
         <div className="sidebar-list">
           {effectiveScope === 'both' ? (
             <>
               <div className="sidebar-section-label">Yours</div>
-              {todos.filter((t) => t.owner_id === me.id).map((todo) => (
+              {filteredTodos.filter((t) => t.owner_id === me.id).map((todo) => (
                 <SidebarItem
                   key={todo.id}
                   todo={todo}
@@ -961,7 +1317,7 @@ const App = () => {
                   <div className="sidebar-section-label sidebar-section-label--partner">
                     {partnerShort || 'Partner'}
                   </div>
-                  {todos.filter((t) => t.owner_id !== me.id).map((todo) => (
+                  {filteredTodos.filter((t) => t.owner_id !== me.id).map((todo) => (
                     <SidebarItem
                       key={todo.id}
                       todo={todo}
@@ -976,7 +1332,7 @@ const App = () => {
               )}
             </>
           ) : (
-            todos.map((todo) => (
+            filteredTodos.map((todo) => (
               <SidebarItem
                 key={todo.id}
                 todo={todo}
@@ -988,9 +1344,9 @@ const App = () => {
               />
             ))
           )}
-          {todos.length === 0 && (
+          {filteredTodos.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
-              {readOnlyCanvas ? 'No items yet' : 'No notes yet'}
+              {searchQuery ? 'No matching items' : readOnlyCanvas ? 'No items yet' : 'No notes yet'}
             </div>
           )}
         </div>
@@ -1122,7 +1478,7 @@ const App = () => {
           )}
           <button
             type="button"
-            className="toolbar-btn"
+            className="toolbar-btn zoom-controls-mobile"
             onClick={() => createNote()}
             title={readOnlyCanvas ? 'Switch to your list to add items' : 'New item'}
             disabled={readOnlyCanvas}
@@ -1130,7 +1486,7 @@ const App = () => {
           >
             <Edit size={20} />
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <div className="zoom-controls-mobile" style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
             <button type="button" className="toolbar-btn" onClick={() => setCamera((prev) => ({ ...prev, zoom: Math.min(prev.zoom * 1.2, 5) }))}>
               <ZoomIn size={18} />
             </button>
@@ -1149,6 +1505,12 @@ const App = () => {
           </div>
         )}
 
+        {!online && (
+          <div className="read-only-banner" style={{ background: 'rgba(255, 149, 0, 0.1)', color: '#996300' }}>
+            Offline — changes will sync when you reconnect
+          </div>
+        )}
+
         <div
           className="canvas-container"
           ref={canvasRef}
@@ -1158,14 +1520,34 @@ const App = () => {
           onMouseUp={handleMouseUp}
           onDoubleClick={handleDoubleClick}
           onMouseLeave={() => setIsPanning(false)}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={(e) => { handleTouchEnd(e); handleCanvasTap(e); }}
           style={{
-            cursor: isPanning ? 'grabbing' : 'grab',
+            cursor: isPanning ? 'grabbing' : IS_TOUCH_DEVICE ? 'default' : 'grab',
             backgroundImage: 'radial-gradient(var(--notebook-dot) 1px, transparent 1px)',
             backgroundPosition: `${-camera.x * camera.zoom}px ${-camera.y * camera.zoom}px`,
             backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`,
+            touchAction: 'none',
           }}
         >
           <div className="canvas-notebook-paper" aria-hidden />
+
+          {/* Empty state for new users */}
+          {todos.length === 0 && !readOnlyCanvas && (
+            <div className="empty-state">
+              <div className="empty-state-text">
+                Your notebook is empty.<br />
+                {IS_TOUCH_DEVICE ? 'Tap the + button to create your first item.' : 'Double-click anywhere or press any key to start writing.'}
+              </div>
+              {!me.partner && (
+                <div className="empty-state-hint">
+                  Share your invite code to collaborate with your partner.
+                </div>
+              )}
+            </div>
+          )}
+
           <motion.div
             style={{
               position: 'absolute',
@@ -1205,7 +1587,20 @@ const App = () => {
             </AnimatePresence>
           </motion.div>
         </div>
+
+        {/* Mobile FAB */}
+        {!readOnlyCanvas && (
+          <button
+            className="fab"
+            onClick={() => createNote()}
+            aria-label="New item"
+          >
+            <Plus size={28} />
+          </button>
+        )}
       </main>
+
+      <ToastContainer />
     </div>
   );
 };

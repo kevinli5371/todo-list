@@ -1,0 +1,18 @@
+{
+  "name": "Shared Todos",
+  "short_name": "Todos",
+  "description": "A shared notebook-style todo list for you and your partner",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fff8fa",
+  "theme_color": "#fff8fa",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,13 +1,15 @@
 import logging
 import os
+import time
 import uuid
+from collections import defaultdict
 from typing import Annotated, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +26,11 @@ init_db()
 
 app = FastAPI(title="Shared Todo", version="1.0.0")
 
-_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:4173")
+_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:5174,http://localhost:4173,"
+    "http://10.0.0.249:5173,http://10.0.0.249:5174",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _origins.split(",") if o.strip()],
@@ -34,6 +40,46 @@ app.add_middleware(
 
 security = HTTPBearer(auto_error=False)
 
+# ── Rate limiting ────────────────────────────────────────────
+
+# Simple in-memory rate limiter: {user_id: [(timestamp, ...)]}
+_rate_buckets: dict[str, list[float]] = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX_REQUESTS = 120  # requests per window (generous for real-time)
+RATE_LIMIT_MAX_CREATES = 30  # todo creates per window
+
+
+def _check_rate_limit(user_id: str, bucket_suffix: str = "", max_requests: int = RATE_LIMIT_MAX_REQUESTS):
+    key = f"{user_id}:{bucket_suffix}" if bucket_suffix else user_id
+    now = time.time()
+    bucket = _rate_buckets[key]
+    # Remove old entries
+    cutoff = now - RATE_LIMIT_WINDOW
+    _rate_buckets[key] = [t for t in bucket if t > cutoff]
+    if len(_rate_buckets[key]) >= max_requests:
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
+    _rate_buckets[key].append(now)
+
+
+# ── Validation constants ─────────────────────────────────────
+
+MAX_TODO_TEXT_LENGTH = 10_000
+MAX_POSITION_ABS = 50_000  # world coordinates
+
+
+def _validate_todo_text(text: str | None):
+    if text is not None and len(text) > MAX_TODO_TEXT_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Text too long (max {MAX_TODO_TEXT_LENGTH} characters)")
+
+
+def _validate_position(x: float | None, y: float | None):
+    if x is not None and abs(x) > MAX_POSITION_ABS:
+        raise HTTPException(status_code=400, detail=f"x position out of range (max ±{MAX_POSITION_ABS})")
+    if y is not None and abs(y) > MAX_POSITION_ABS:
+        raise HTTPException(status_code=400, detail=f"y position out of range (max ±{MAX_POSITION_ABS})")
+
+
+# ── Auth ─────────────────────────────────────────────────────
 
 def _ensure_profile(db: Session, user_id: str, email: str) -> Profile:
     p = db.query(Profile).filter(Profile.id == user_id).first()
@@ -96,6 +142,8 @@ def todo_to_out(row: Todo) -> TodoOut:
     )
 
 
+# ── Endpoints ────────────────────────────────────────────────
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -103,6 +151,7 @@ def health():
 
 @app.get("/api/me", response_model=MeResponse)
 def me(user: Profile = Depends(get_current_profile), db: Session = Depends(get_db)):
+    _check_rate_limit(user.id)
     partner = None
     if user.partner_id:
         p = db.query(Profile).filter(Profile.id == user.partner_id).first()
@@ -119,10 +168,13 @@ def me(user: Profile = Depends(get_current_profile), db: Session = Depends(get_d
 
 @app.patch("/api/me", response_model=MeResponse)
 def update_me(body: UpdateMeRequest, user: Profile = Depends(get_current_profile), db: Session = Depends(get_db)):
+    _check_rate_limit(user.id)
     if body.username is not None:
         new_username = body.username.strip()
         if not new_username:
             raise HTTPException(status_code=400, detail="Username cannot be empty")
+        if len(new_username) > 32:
+            raise HTTPException(status_code=400, detail="Username too long (max 32 characters)")
         existing = db.query(Profile).filter(Profile.username == new_username, Profile.id != user.id).first()
         if existing:
             raise HTTPException(status_code=409, detail="Username already taken")
@@ -146,6 +198,7 @@ def update_me(body: UpdateMeRequest, user: Profile = Depends(get_current_profile
 
 @app.post("/api/pair", response_model=MeResponse)
 def pair(body: PairRequest, user: Profile = Depends(get_current_profile), db: Session = Depends(get_db)):
+    _check_rate_limit(user.id, "pair", 10)
     if user.partner_id is not None:
         raise HTTPException(status_code=400, detail="You are already paired with someone")
 
@@ -178,6 +231,7 @@ def list_todos(
     user: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ):
+    _check_rate_limit(user.id)
     if scope not in ("mine", "partner", "both"):
         raise HTTPException(status_code=400, detail="scope must be mine, partner, or both")
 
@@ -208,6 +262,10 @@ def create_todo(
     user: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ):
+    _check_rate_limit(user.id, "create", RATE_LIMIT_MAX_CREATES)
+    _validate_todo_text(body.text)
+    _validate_position(body.x, body.y)
+
     tid = str(uuid.uuid4())
     row = Todo(
         id=tid,
@@ -233,6 +291,7 @@ def patch_todo(
     user: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ):
+    _check_rate_limit(user.id)
     row = db.query(Todo).filter(Todo.id == todo_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Todo not found")
@@ -240,8 +299,12 @@ def patch_todo(
         raise HTTPException(status_code=403, detail="You can only edit your own todos")
 
     patch = body.model_dump(exclude_unset=True)
+
     if "text" in patch:
+        _validate_todo_text(patch["text"])
         row.text = patch["text"]
+    if "x" in patch or "y" in patch:
+        _validate_position(patch.get("x"), patch.get("y"))
     if "x" in patch:
         row.x = patch["x"]
     if "y" in patch:
@@ -251,6 +314,8 @@ def patch_todo(
     if "dueDate" in patch:
         row.due_date = patch["dueDate"]
     if "repeat" in patch:
+        if patch["repeat"] and patch["repeat"] not in ("daily", "weekly", "monthly", "yearly"):
+            raise HTTPException(status_code=400, detail="Invalid repeat value")
         row.repeat = patch["repeat"]
     if "timestamp" in patch:
         row.timestamp = patch["timestamp"]
@@ -266,6 +331,7 @@ def delete_todo(
     user: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ):
+    _check_rate_limit(user.id)
     row = db.query(Todo).filter(Todo.id == todo_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Todo not found")

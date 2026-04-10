@@ -1003,3 +1003,267 @@ body {
   border-left: 3px solid #7c6af7;
   padding-left: 9px;
 }
+
+/* ── Search bar ──────────────────────────────────────────── */
+
+.sidebar-search {
+  padding: 0 10px 8px;
+  flex-shrink: 0;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--paper-card);
+  color: var(--text-primary);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.sidebar-search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.sidebar-search-wrap {
+  position: relative;
+}
+
+.sidebar-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* ── Toast notifications ─────────────────────────────────── */
+
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--text-primary);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 360px;
+  white-space: nowrap;
+}
+
+.toast-undo {
+  background: none;
+  border: none;
+  color: var(--accent-color);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  filter: brightness(1.5);
+}
+
+/* ── FAB (mobile new-item button) ────────────────────────── */
+
+.fab {
+  display: none;
+}
+
+/* ── Sidebar overlay backdrop (mobile) ───────────────────── */
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* ── Empty state / onboarding ────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.empty-state-text {
+  font-size: 16px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 260px;
+}
+
+.empty-state-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  margin-top: 8px;
+}
+
+/* ── Mobile responsive ───────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 300px;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: none;
+  }
+
+  .sidebar > * {
+    opacity: 1;
+    transition: none;
+  }
+
+  .app-container:not(.sidebar-hidden) .sidebar {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .sidebar-hidden .sidebar {
+    width: 300px;
+    transform: translateX(-100%);
+  }
+
+  .sidebar-hidden .sidebar > * {
+    opacity: 1;
+    pointer-events: auto;
+    transition: none;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+  }
+
+  .app-container:not(.sidebar-hidden) .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-header {
+    padding-top: env(safe-area-inset-top, 16px);
+    padding-top: calc(env(safe-area-inset-top, 16px) + 16px);
+  }
+
+  .toolbar {
+    height: 48px;
+    padding: 0 12px;
+    padding-top: env(safe-area-inset-top, 0px);
+    gap: 8px;
+  }
+
+  .toolbar-btn {
+    padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .toolbar-seg {
+    padding: 0 10px;
+    height: 36px;
+    font-size: 11px;
+    min-height: 44px;
+  }
+
+  .fab {
+    display: flex;
+    position: fixed;
+    bottom: 24px;
+    right: 20px;
+    z-index: 30;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 16px rgba(212, 120, 154, 0.35);
+    cursor: pointer;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .fab:active {
+    transform: scale(0.93);
+  }
+
+  .todo-item-canvas {
+    min-width: 200px;
+  }
+
+  .drag-handle {
+    opacity: 0.5;
+  }
+
+  .delete-btn {
+    opacity: 0.6;
+  }
+
+  .todo-meta-btn {
+    opacity: 1;
+  }
+
+  .canvas-container {
+    cursor: default;
+  }
+
+  .canvas-container:active {
+    cursor: default;
+  }
+
+  .toast-container {
+    bottom: 90px;
+    bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .todo-footer-wrapper.is-open {
+    max-height: 380px;
+  }
+
+  .zoom-controls-mobile {
+    display: none;
+  }
+
+  .auth-card {
+    margin: 16px;
+    padding: 24px 20px;
+  }
+}
