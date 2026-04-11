@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
@@ -29,7 +29,9 @@ app = FastAPI(title="Shared Todo", version="1.0.0")
 _origins = os.getenv(
     "CORS_ORIGINS",
     "http://localhost:5173,http://localhost:5174,http://localhost:4173,"
-    "http://10.0.0.249:5173,http://10.0.0.249:5174",
+    "http://10.0.0.249:5173,http://10.0.0.249:5174,"
+    "http://172.30.198.197:5173,http://172.30.198.197:5174,"
+    "http://172.20.10.10:5173,http://172.20.10.10:5174,"
 )
 app.add_middleware(
     CORSMiddleware,

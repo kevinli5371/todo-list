@@ -23,6 +23,7 @@ const REPEAT_OPTIONS = [null, 'daily', 'weekly', 'monthly', 'yearly'];
 const REPEAT_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
 
 const IS_TOUCH_DEVICE = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+// Computed once at load; resize/orientation changes will not update this.
 const IS_MOBILE = typeof window !== 'undefined' && window.innerWidth <= 768;
 
 const formatDueDate = (iso) => {
@@ -905,8 +906,17 @@ const App = () => {
     };
     try {
       const created = await createTodoRemote(payload);
-      setTodos((prev) => [created, ...prev]);
-      setFocusedId(created.id);
+      if (created) {
+        // Online: server returned the real object
+        setTodos((prev) => [created, ...prev]);
+        setFocusedId(created.id);
+      } else {
+        // Offline: insert a temporary optimistic todo with a local id
+        const localId = `local-${Date.now()}`;
+        const optimistic = { ...payload, id: localId, owner_id: me.id };
+        setTodos((prev) => [optimistic, ...prev]);
+        setFocusedId(localId);
+      }
     } catch (e) {
       console.error(e);
       addToast('Failed to create item');

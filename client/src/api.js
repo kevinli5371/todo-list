@@ -136,7 +136,7 @@ export function fetchTodos(scope) {
 }
 
 export function createTodoRemote(payload) {
-  return request('/api/todos', { method: 'POST', body: payload });
+  return mutationRequest('/api/todos', { method: 'POST', body: payload });
 }
 
 export function patchTodoRemote(id, patch) {
